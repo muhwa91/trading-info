@@ -130,13 +130,24 @@ class StockController extends Controller
 
         // 코스피 지수(KOSPI200) — KIS 국내업종 API 사용 (값 일관성)
         if ($ticker === 'KOSPI200') {
-            // 코스피 지수 캔들은 분봉도 KIS 분봉 집계로 구성 → 90초 캐싱. 현재가는 KIS 현재가 캐시(3초) 별도.
-            // TTL 90초로 늘려 WS 사이클 만료 빈도를 1/3로 감소.
-            $candleTtl = 90;
+            // 코스피 지수 캔들은 분봉도 KIS 분봉 집계로 구성.
+            // TTL 15초: Yahoo 가 NQ 데이터를 ~30초마다 갱신하므로 이에 맞춰 단축해 차트 체감 빈도를 높인다.
+            $candleTtl = 15;
             $cacheKey = "kis_kospi_index_{$timeframe}";
-            $response = Cache::remember($cacheKey, $candleTtl, function () use ($timeframe) {
-                return $this->getKospiIndexData($timeframe);
-            });
+            if ($allowStale) {
+                // WS 전송 경로: stale 캐시 우선 읽기(동기 fetch 금지 — 케이던스 유지)
+                $cached = Cache::get($cacheKey) ?? Cache::get("{$cacheKey}_last");
+                if ($cached === null) {
+                    // cold-start: 캐시 없음 → 빈 캔들로 응답
+                    return response()->json(['ticker' => $ticker, 'candles' => [], 'source' => 'cold-start']);
+                }
+                $response = $cached;
+            } else {
+                // REST 직접조회 경로: 만료 시 동기 갱신 허용
+                $response = Cache::remember($cacheKey, $candleTtl, function () use ($timeframe) {
+                    return $this->getKospiIndexData($timeframe);
+                });
+            }
 
             $content = json_decode($response->getContent(), true);
             if (is_array($content)) {
@@ -149,15 +160,58 @@ class StockController extends Controller
         }
 
         if ($ticker === 'NQ=F' || $ticker === '^KS200' || $ticker === 'USDKRW=X') {
-            // 지수/환율 Yahoo 캔들: 90초 캐싱 — 봉 자체는 초 단위로 변하지 않음.
-            // 실시간성은 meta.regularMarketPrice 가 담당. TTL 90초로 늘려 WS 사이클 만료 빈도를 줄임.
+            // 지수/환율 Yahoo 캔들: TTL 15초.
+            // Yahoo 가 NQ 데이터를 ~30초마다 갱신하므로 TTL 을 단축해 차트가 자주 전진하도록 한다.
+            // 개별주식의 KIS 오버레이(3초) 와 유사하게, 캔들 갱신 사이에도 현재가가 최신을 가리키도록
+            // meta.regularMarketPrice 를 마지막 봉 close·current_price 에 반영한다.
             $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}";
-            $response = Cache::remember($cacheKey, 90, function () use ($ticker, $timeframe) {
-                return $this->getYahooChartData($ticker, $timeframe);
-            });
-            
+            if ($allowStale) {
+                // WS 전송 경로: stale 캐시 우선 읽기(동기 fetch 금지 — 케이던스 유지)
+                $cached = Cache::get($cacheKey) ?? Cache::get("{$cacheKey}_last");
+                if ($cached === null) {
+                    // cold-start: 캐시 없음 → 빈 캔들로 응답
+                    return response()->json(['ticker' => $ticker, 'candles' => [], 'source' => 'cold-start']);
+                }
+                $response = $cached;
+            } else {
+                // REST 직접조회 경로: 만료 시 동기 갱신 허용
+                $response = Cache::remember($cacheKey, 15, function () use ($ticker, $timeframe) {
+                    return $this->getYahooChartData($ticker, $timeframe);
+                });
+            }
+
             $content = json_decode($response->getContent(), true);
             if (is_array($content)) {
+                // ── meta.regularMarketPrice 보정 (분봉·1d 제외) ────────────────────────
+                // Yahoo v8 API 의 meta.regularMarketPrice 는 캔들 캐시와 무관하게
+                // ~30초마다 갱신되는 현재가다. 캔들 캐시(15초)가 살아있는 구간에도
+                // 이 값으로 마지막 봉 close·current_price 를 보정해 체감 갱신 빈도를 높인다.
+                // 조건: 분봉 계열(timeframe !== '1d')이고 regularMarketPrice 가 양수일 때만.
+                // 등락률 계산(prevClose 기준)은 getYahooChartData() 내부에서 이미 완료됐으므로
+                // change_amount / change_percent 는 건드리지 않는다.
+                if (
+                    $timeframe !== '1d'
+                    && isset($content['candles'])
+                    && count($content['candles']) > 0
+                    && isset($content['meta']['regularMarketPrice'])
+                    && (float)$content['meta']['regularMarketPrice'] > 0
+                ) {
+                    $livePrice = round((float)$content['meta']['regularMarketPrice'], 2);
+                    $lastIdx   = count($content['candles']) - 1;
+
+                    // 마지막 봉 close 를 현재가로 갱신 (high/low 는 봉의 실제 레인지이므로 유지)
+                    $content['candles'][$lastIdx]['close'] = $livePrice;
+                    // high/low 도 live price 기준으로 확장 (봉 범위가 좁아지지 않게)
+                    if ($livePrice > $content['candles'][$lastIdx]['high']) {
+                        $content['candles'][$lastIdx]['high'] = $livePrice;
+                    }
+                    if ($livePrice < $content['candles'][$lastIdx]['low']) {
+                        $content['candles'][$lastIdx]['low'] = $livePrice;
+                    }
+                    $content['current_price'] = $livePrice;
+                }
+                // ────────────────────────────────────────────────────────────────────────
+
                 if ($ticker === 'NQ=F') {
                     // 나스닥100 선물은 CME 에서 일~금 거의 24시간 거래 — 주식 거래일(현금장) 게이트를 쓰지 않는다.
                     // KST 기준 휴장창: 토 06:00 ~ 월 07:00 (금 17:00 ET 마감 → 일 18:00 ET 재개)
@@ -180,9 +234,20 @@ class StockController extends Controller
         if ($ticker === 'KOSPI_NIGHT') {
             // 야간선물은 NQ=F 기반으로 합성 — NQ=F 캔들 캐싱(90초)에 맞춰 동일하게 90초 캐싱
             $cacheKey = "kospi_night_data_{$timeframe}";
-            $response = Cache::remember($cacheKey, 90, function () use ($timeframe) {
-                return $this->getKOSPINightChartData($timeframe);
-            });
+            if ($allowStale) {
+                // WS 전송 경로: stale 캐시 우선 읽기(동기 fetch 금지 — 케이던스 유지)
+                $cached = Cache::get($cacheKey) ?? Cache::get("{$cacheKey}_last");
+                if ($cached === null) {
+                    // cold-start: 캐시 없음 → 빈 캔들로 응답
+                    return response()->json(['ticker' => $ticker, 'candles' => [], 'source' => 'cold-start']);
+                }
+                $response = $cached;
+            } else {
+                // REST 직접조회 경로: 만료 시 동기 갱신 허용
+                $response = Cache::remember($cacheKey, 90, function () use ($timeframe) {
+                    return $this->getKOSPINightChartData($timeframe);
+                });
+            }
             
             $content = json_decode($response->getContent(), true);
             if (is_array($content)) {
@@ -1108,7 +1173,7 @@ class StockController extends Controller
                 // 전일종가와 다르다(예: NQ=F 60d 쿼리 → chartPreviousClose = 24408, 실제 전일 = 30719).
                 // range=2d 미니 요청으로 chartPreviousClose(공식 전일종가)만 별도 취득한다.
                 // 개별 종목 1d 동작은 그대로 유지(회귀 최소화).
-                if (in_array($ticker, ['NQ=F', 'KOSPI200', '^KS200'], true)) {
+                if (in_array($ticker, ['NQ=F', 'KOSPI200', '^KS200', '^KS11'], true)) {
                     $prevClose = 0.0;
                     try {
                         $miniUrl  = "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}?interval=1d&range=2d";
@@ -1136,7 +1201,7 @@ class StockController extends Controller
             } else {
                 // For regular stocks, prioritize the daily previous close from KIS to match the Watchlist sidebar
                 $dailyPrevClose = null;
-                if ($ticker !== 'NQ=F' && $ticker !== 'KOSPI200' && $ticker !== '^KS200') {
+                if ($ticker !== 'NQ=F' && $ticker !== 'KOSPI200' && $ticker !== '^KS200' && $ticker !== '^KS11') {
                     $dailyPrevClose = $this->getPreviousClose($ticker);
                 }
 
@@ -1154,7 +1219,7 @@ class StockController extends Controller
             $displayName = $this->getStockName($ticker);
             if ($ticker === 'NQ=F') {
                 $displayName = '나스닥100 선물';
-            } elseif ($ticker === 'KOSPI200' || $ticker === '^KS200') {
+            } elseif ($ticker === 'KOSPI200' || $ticker === '^KS200' || $ticker === '^KS11') {
                 $displayName = '코스피 지수';
             }
             
@@ -1327,12 +1392,76 @@ class StockController extends Controller
     }
 
     /**
+     * 코스피 지수 1d 응답에 KIS 라이브 현재지수를 적용한다.
+     *
+     * Yahoo 폴백 경로·KIS 정상 경로 모두 이 메서드를 통해 최종 응답을 만든다.
+     * $liveCurrent > 0 일 때만 덮어쓰며, 0 이하면 원래 값을 그대로 유지한다.
+     * 마지막 봉 close = $liveCurrent, high = max(last.high, live), low = min(last.low, live).
+     * 가짜 새 봉은 생성하지 않는다 — 기존 마지막 봉만 수정한다.
+     */
+    private function applyLiveCurrentToIndexResponse(
+        \Illuminate\Http\JsonResponse $response,
+        float $liveCurrent,
+        float $liveChg,
+        float $livePct
+    ): \Illuminate\Http\JsonResponse {
+        if ($liveCurrent <= 0) {
+            return $response;
+        }
+
+        $content = json_decode($response->getContent(), true);
+        if (!is_array($content) || empty($content['candles'])) {
+            return $response;
+        }
+
+        // current_price·등락 덮어쓰기
+        $content['current_price']   = round($liveCurrent, 2);
+        $content['change_amount']   = round($liveChg, 2);
+        $content['change_percent']  = round($livePct, 2);
+
+        // 마지막 봉 수정 (가짜 새 봉 생성 금지 — 기존 마지막 봉만)
+        $lastIdx = count($content['candles']) - 1;
+        $content['candles'][$lastIdx]['close'] = round($liveCurrent, 2);
+        if ($liveCurrent > $content['candles'][$lastIdx]['high']) {
+            $content['candles'][$lastIdx]['high'] = round($liveCurrent, 2);
+        }
+        if ($liveCurrent < $content['candles'][$lastIdx]['low']) {
+            $content['candles'][$lastIdx]['low'] = round($liveCurrent, 2);
+        }
+
+        return response()->json($content);
+    }
+
+    /**
+     * iscd 값을 Yahoo Finance 심볼로 매핑한다.
+     * '0001' (코스피 종합) → '^KS11', '2001' (코스피200) → '^KS200'.
+     * 미지의 iscd 는 안전하게 '^KS11' 로 폴백.
+     */
+    private function kospiYahooSymbol(string $iscd): string
+    {
+        if ($iscd === '2001') {
+            return '^KS200';  // 코스피200
+        }
+        return '^KS11';  // '0001'(코스피 종합) 및 기타 → 코스피 종합
+    }
+
+    /**
      * 코스피 지수 차트 데이터를 KIS 국내업종 API 로 구성.
-     * $iscd: '0001'=코스피 종합(전체, 기본), '0002'=코스피200.
-     * 1d=일봉, 그 외=분봉(종가 기반 OHLC 합성 후 집계). 실패 시 Yahoo(^KS200) 폴백.
+     * $iscd: '0001'=코스피 종합(전체, 기본), '2001'=코스피200.
+     * 1d=일봉, 그 외=분봉(종가 기반 OHLC 합성 후 집계). 실패·stale 시 Yahoo 폴백.
+     *
+     * 버그 A 수정 (2026-06-23):
+     *   KIS FHPUP02120000 일봉 API 가 rt_cd=0 성공이지만 ~4개월 stale 데이터를 반환하는
+     *   현상을 값-기반으로 감지한다. KIS output1.bstp_nmix_prpr(현재지수)와 캔들 최신
+     *   close 의 괴리가 10% 초과면 stale 로 판정해 Yahoo 일봉으로 폴백한다.
+     *   폴백 심볼: '0001'→'^KS11'(코스피 종합), '2001'→'^KS200'(코스피200).
+     *
+     * 버그 B 수정 (2026-06-23):
+     *   분봉 intervalSeconds 블록에 1m 케이스가 없어 1m 이 3m 으로 집계되던 문제 수정.
      */
     public function getKospiIndexData($timeframe, $iscd = '0001')
     {
+        $yahooSymbol = $this->kospiYahooSymbol($iscd);
 
         if ($timeframe === '1d') {
             $data = $this->kisIndexRequest(
@@ -1348,7 +1477,8 @@ class StockController extends Controller
             );
 
             if (!$data || ($data['rt_cd'] ?? '1') !== '0' || empty($data['output2'])) {
-                return $this->getYahooChartData('KOSPI200', $timeframe);
+                \Illuminate\Support\Facades\Log::info("KOSPI 1d [{$iscd}]: KIS 응답 실패 → Yahoo {$yahooSymbol} 폴백");
+                return $this->getYahooChartData($yahooSymbol, $timeframe);
             }
 
             $candles = [];
@@ -1367,7 +1497,8 @@ class StockController extends Controller
             }
 
             if (empty($candles)) {
-                return $this->getYahooChartData('KOSPI200', $timeframe);
+                \Illuminate\Support\Facades\Log::info("KOSPI 1d [{$iscd}]: 캔들 파싱 결과 0개 → Yahoo {$yahooSymbol} 폴백");
+                return $this->getYahooChartData($yahooSymbol, $timeframe);
             }
 
             usort($candles, function ($a, $b) {
@@ -1375,12 +1506,48 @@ class StockController extends Controller
             });
 
             $o1 = $data['output1'] ?? [];
-            $current = (float)($o1['bstp_nmix_prpr'] ?? end($candles)['close']);
+            $current = (float)($o1['bstp_nmix_prpr'] ?? 0);
+
+            // ── KIS output1 라이브값 캡처 (폴백 전에 보존) ──────────────────────
+            // stale 판정 후 Yahoo 폴백으로 넘어가도 output1 의 라이브 현재지수·등락은
+            // 여전히 유효하다(KIS 호출 자체는 성공, 캔들 데이터만 과거). 폴백 직전에
+            // 캡처해 두면 Yahoo 폴백 경로에서도 현재가를 라이브값으로 덮어쓸 수 있다.
+            $liveCurrent = ($current > 0) ? $current : 0.0;
+            [$liveChg, $livePct] = ($current > 0)
+                ? $this->kisIndexChange($o1)
+                : [0.0, 0.0];
+            // ────────────────────────────────────────────────────────────────────
+
+            // ── 값-기반 stale 판정 (버그 A) ─────────────────────────────────────
+            // KIS 가 rt_cd=0 성공이지만 ~4개월 전 데이터를 반환하는 현상 대응.
+            // output1.bstp_nmix_prpr = 실시간 현재지수 vs 캔들 최신 close 비교.
+            // 현재지수 > 0 이고 괴리가 10% 초과면 stale 로 판정 → Yahoo 폴백.
+            // (10% 임계치: 장중 변동 최대 ±8% 수준을 고려해 충분한 여유를 둠)
+            $latestKisClose = (float)(end($candles)['close'] ?? 0.0);
+            if ($current > 0 && $latestKisClose > 0) {
+                $deviation = abs($current - $latestKisClose) / $latestKisClose;
+                if ($deviation > 0.10) {
+                    \Illuminate\Support\Facades\Log::warning(
+                        "KOSPI 1d [{$iscd}] stale 감지: current={$current}, lastClose={$latestKisClose}, " .
+                        "deviation=" . round($deviation * 100, 1) . "% > 10% → Yahoo {$yahooSymbol} 폴백"
+                    );
+                    // Yahoo 폴백: 캔들 히스토리는 Yahoo, 현재가·등락은 KIS 라이브값으로 덮어쓴다.
+                    $yahooResp = $this->getYahooChartData($yahooSymbol, $timeframe);
+                    return $this->applyLiveCurrentToIndexResponse($yahooResp, $liveCurrent, $liveChg, $livePct);
+                }
+            }
+            // ────────────────────────────────────────────────────────────────────
+
+            if ($current <= 0) {
+                $current = $latestKisClose;
+            }
             [$chg, $pct] = $this->kisIndexChange($o1);
-            return $this->kisIndexResponse($current, $chg, $pct, $candles, 'KIS 코스피 지수 (일봉)');
+            // KIS 정상 경로: 응답을 만든 뒤 마지막 봉 close 를 라이브 현재지수로 갱신한다.
+            $response = $this->kisIndexResponse($current, $chg, $pct, $candles, 'KIS 코스피 지수 (일봉)');
+            return $this->applyLiveCurrentToIndexResponse($response, $current, $chg, $pct);
         }
 
-        // 분봉 (3m/5m/10m/30m/1h) — KIS 업종 분봉(종가만 제공) → OHLC 합성 후 집계
+        // 분봉 (1m/3m/5m/10m/30m/1h) — KIS 업종 분봉(종가만 제공) → OHLC 합성 후 집계
         $data = $this->kisIndexRequest(
             '/uapi/domestic-stock/v1/quotations/inquire-time-indexchartprice',
             'FHPUP02110200',
@@ -1394,7 +1561,7 @@ class StockController extends Controller
         );
 
         if (!$data || ($data['rt_cd'] ?? '1') !== '0' || empty($data['output'])) {
-            return $this->getYahooChartData('KOSPI200', $timeframe);
+            return $this->getYahooChartData($yahooSymbol, $timeframe);
         }
 
         // 첫 행 bsop_hour '888888'(요약) 및 비정상 시각 제외
@@ -1423,7 +1590,7 @@ class StockController extends Controller
         }
 
         if (empty($points)) {
-            return $this->getYahooChartData('KOSPI200', $timeframe);
+            return $this->getYahooChartData($yahooSymbol, $timeframe);
         }
 
         usort($points, function ($a, $b) {
@@ -1447,8 +1614,10 @@ class StockController extends Controller
             $prevClose = $close;
         }
 
+        // 버그 B 수정: 1m 케이스 추가 (누락으로 인해 1m 이 기본 180초=3m 으로 집계되던 문제)
         $intervalSeconds = 180;
-        if ($timeframe === '5m') $intervalSeconds = 300;
+        if ($timeframe === '1m') $intervalSeconds = 60;
+        elseif ($timeframe === '5m') $intervalSeconds = 300;
         elseif ($timeframe === '10m') $intervalSeconds = 600;
         elseif ($timeframe === '30m') $intervalSeconds = 1800;
         elseif ($timeframe === '1h') $intervalSeconds = 3600;

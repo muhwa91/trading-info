@@ -590,19 +590,27 @@ class WebSocketAgentServer extends Command
     /**
      * stale-while-revalidate: 전송+KIS 후 호출.
      *
-     * _freshness 보조키(TTL=90초)가 만료된 종목에 대해 Yahoo HTTP 를 실행한다.
+     * _freshness 보조키가 만료된 종목에 대해 Yahoo HTTP 를 실행한다.
      * 성공 시:
-     *   - getStockData() 내부 Cache::remember($cacheKey, 90, ...) 가 원본 캐시를 채운다.
+     *   - getStockData() 내부 Cache::remember($cacheKey, TTL, ...) 가 원본 캐시를 채운다.
      *   - Cache::forever("{$cacheKey}_last") 에 동일 값을 영구 저장(다음 stale-restore 용).
-     *   - Cache::put("{$cacheKey}_freshness", 1, 90) 으로 신선도 마커를 세운다.
+     *   - Cache::put("{$cacheKey}_freshness", 1, $freshnessTtl) 으로 신선도 마커를 세운다.
      *
-     * _freshness 가 살아있는 종목(90초 이내 갱신)은 스킵 → 중복 호출 방지.
+     * freshness TTL:
+     *   - 지수/환율(NQ=F·^KS200·USDKRW=X·KOSPI200·KOSPI_NIGHT): 15초
+     *     → Yahoo 가 ~30초마다 갱신하므로 15초 TTL 로 빠르게 재갱신해 차트를 자주 전진시킨다.
+     *   - 개별주식: 90초 (봉 갱신 빈도가 낮고 KIS 현재가 오버레이가 별도 담당)
+     *
+     * _freshness 가 살아있는 종목은 스킵 → 중복 호출 방지.
      * 5초 재주입으로 원본 캐시가 살아있어도, _freshness 없으면 갱신 대상으로 처리.
      *
      * @param array<string, array{ticker:string, timeframe:string}> $uniquePairs
      */
     private function refreshYahooCache(array $uniquePairs): void
     {
+        // 지수/환율 ticker 목록 — 캐시 TTL 이 15초이므로 freshness 도 동일하게 맞춘다.
+        $indexTickers = ['NQ=F', '^KS200', 'USDKRW=X', 'KOSPI200', 'KOSPI_NIGHT'];
+
         foreach ($uniquePairs as $pair) {
             $ticker = $pair['ticker'];
             $tf     = $pair['timeframe'];
@@ -617,17 +625,20 @@ class WebSocketAgentServer extends Command
                 $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}_raw";
             }
 
-            // _freshness 마커가 살아있으면 90초 이내 갱신됨 → 스킵
+            // freshness TTL: 지수/환율 15초, 개별주식 90초
+            $freshnessTtl = in_array($ticker, $indexTickers, true) ? 15 : 90;
+
+            // _freshness 마커가 살아있으면 TTL 이내 이미 갱신됨 → 스킵
             $freshnessKey = "{$cacheKey}_freshness";
             if (Cache::has($freshnessKey)) {
                 continue;
             }
 
-            // 90초 만료 or cold-start → Yahoo HTTP fetch
+            // freshness 만료 or cold-start → Yahoo HTTP fetch
             try {
                 $request = new Request();
                 $request->query->set('timeframe', $tf);
-                // getStockData() 내부의 Cache::remember($cacheKey, 90, ...) 가
+                // getStockData() 내부의 Cache::remember($cacheKey, TTL, ...) 가
                 // 원본 캐시를 채운다(5초 재주입 값은 이미 expire됐거나 덮어씌워진다).
                 $this->controller->getStockData($request, $ticker);
 
@@ -635,7 +646,7 @@ class WebSocketAgentServer extends Command
                 $cachedVal = Cache::get($cacheKey);
                 if ($cachedVal !== null) {
                     Cache::forever("{$cacheKey}_last", $cachedVal);
-                    Cache::put($freshnessKey, 1, 90);
+                    Cache::put($freshnessKey, 1, $freshnessTtl);
                 }
             } catch (\Exception $e) {
                 $this->error("[Yahoo갱신] [{$ticker} {$tf}] " . $e->getMessage());

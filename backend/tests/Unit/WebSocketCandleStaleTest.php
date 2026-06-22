@@ -104,7 +104,12 @@ class WebSocketCandleStaleTest extends TestCase
 
     // ──────────────────────────────────────────────────────────────
     // Test 3: freshness 마커
-    //   refreshYahooCache 소스에 _freshness 키와 90초 TTL 코드가 존재한다.
+    //   refreshYahooCache 소스에 _freshness 키와 가변 TTL 코드가 존재한다.
+    //
+    //   2026-06-23 변경: 지수/환율(NQ=F·^KS200·USDKRW=X·KOSPI200·KOSPI_NIGHT)은
+    //   freshness TTL 15초, 개별주식은 90초로 분기 처리하게 됨.
+    //   → freshness TTL 은 $freshnessTtl 변수로 동적 결정되므로,
+    //     고정 90초 패턴 대신 변수 참조 패턴($freshnessTtl)을 검증한다.
     // ──────────────────────────────────────────────────────────────
 
     /** @test */
@@ -129,11 +134,34 @@ class WebSocketCandleStaleTest extends TestCase
             'refreshYahooCache 에 Cache::has($freshnessKey) 스킵 조건이 없음'
         );
 
-        // 90초 TTL freshness 마커 저장
-        $this->assertMatchesRegularExpression(
-            '/Cache::put\s*\(\s*\$freshnessKey\s*,\s*1\s*,\s*90\s*\)/',
+        // freshness TTL 을 변수($freshnessTtl)로 결정하는 코드가 있어야 한다.
+        // (지수 15초·개별주식 90초 분기 → 고정 90 대신 변수 참조)
+        $this->assertStringContainsString(
+            '$freshnessTtl',
             $methodSrc,
-            'refreshYahooCache 가 freshness 마커를 90초 TTL 로 저장하지 않음'
+            'refreshYahooCache 가 $freshnessTtl 변수로 freshness TTL 을 결정하지 않음 — ' .
+            '지수/환율 15초·개별주식 90초 분기가 구현되어 있어야 함'
+        );
+
+        // Cache::put($freshnessKey, 1, $freshnessTtl) 패턴 — 변수 TTL 사용 확인
+        $this->assertMatchesRegularExpression(
+            '/Cache::put\s*\(\s*\$freshnessKey\s*,\s*1\s*,\s*\$freshnessTtl\s*\)/',
+            $methodSrc,
+            'refreshYahooCache 가 freshness 마커를 $freshnessTtl 변수 TTL 로 저장하지 않음'
+        );
+
+        // 지수 15초 분기 값 존재
+        $this->assertStringContainsString(
+            '15',
+            $methodSrc,
+            'refreshYahooCache 에 지수용 freshness TTL 15(초) 값이 없음'
+        );
+
+        // 개별주식 90초 분기 값 존재
+        $this->assertStringContainsString(
+            '90',
+            $methodSrc,
+            'refreshYahooCache 에 개별주식용 freshness TTL 90(초) 값이 없음'
         );
 
         // _last 에 영구 저장
