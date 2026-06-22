@@ -1104,8 +1104,35 @@ class StockController extends Controller
             $current = $latestCandle['close'];
 
             if ($timeframe === '1d') {
-                $prevCandle = prev($candles) ?: $latestCandle;
-                $prevClose = $prevCandle['close'];
+                // 지수·선물은 60d range 쿼리의 chartPreviousClose 가 범위 시작 직전 값이라
+                // 전일종가와 다르다(예: NQ=F 60d 쿼리 → chartPreviousClose = 24408, 실제 전일 = 30719).
+                // range=2d 미니 요청으로 chartPreviousClose(공식 전일종가)만 별도 취득한다.
+                // 개별 종목 1d 동작은 그대로 유지(회귀 최소화).
+                if (in_array($ticker, ['NQ=F', 'KOSPI200', '^KS200'], true)) {
+                    $prevClose = 0.0;
+                    try {
+                        $miniUrl  = "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}?interval=1d&range=2d";
+                        $miniResp = $client->get($miniUrl, [
+                            'headers' => ['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
+                            'timeout' => 5,
+                        ]);
+                        $miniData = json_decode($miniResp->getBody()->getContents(), true);
+                        $miniMeta = $miniData['chart']['result'][0]['meta'] ?? [];
+                        $fetched  = (float)($miniMeta['chartPreviousClose'] ?? $miniMeta['previousClose'] ?? 0.0);
+                        if ($fetched > 0) {
+                            $prevClose = $fetched;
+                        }
+                    } catch (\Throwable $miniEx) {
+                        \Illuminate\Support\Facades\Log::warning("Yahoo mini-prevClose fallback for {$ticker}: " . $miniEx->getMessage());
+                    }
+                    // mini 요청 실패 시 직전 봉으로 폴백
+                    if ($prevClose <= 0) {
+                        $prevClose = prev($candles)['close'] ?? $current;
+                    }
+                } else {
+                    $prevCandle = prev($candles) ?: $latestCandle;
+                    $prevClose = $prevCandle['close'];
+                }
             } else {
                 // For regular stocks, prioritize the daily previous close from KIS to match the Watchlist sidebar
                 $dailyPrevClose = null;
@@ -1152,17 +1179,29 @@ class StockController extends Controller
         $nqResponse = $this->getYahooChartData('NQ=F', $timeframe);
         $nqData = json_decode($nqResponse->getContent(), true);
 
-        // 야간선물(코스피200 선물)의 베이스는 코스피200(0002) — KIS 지수 API 사용
-        $kospiResponse = $this->getKospiIndexData($timeframe, '0002');
+        // 야간선물(코스피200 선물)의 베이스는 KOSPI200(~1,477 스케일)이어야 한다.
+        // KIS 분봉 API의 '2001' 코드로 시도하되, 반환값이 KOSPI200 범위(300~3000)를 벗어나면
+        // Yahoo ^KS200 분봉으로 자동 폴백해 올바른 base를 확보한다.
+        $kospiResponse = $this->getKospiIndexData($timeframe, '2001');
         $kospiData = json_decode($kospiResponse->getContent(), true);
-        
+
+        // KIS 반환값이 KOSPI200 스케일(300~3000)을 벗어나면 Yahoo ^KS200 으로 폴백
+        $kospiCandlesForCheck = $kospiData['candles'] ?? [];
+        $kospiLastCandle = $kospiCandlesForCheck ? end($kospiCandlesForCheck) : false;
+        $kospiLastClose = ($kospiLastCandle !== false) ? (float)($kospiLastCandle['close'] ?? 0.0) : 0.0;
+        if ($kospiLastClose > 3000 || $kospiLastClose < 100) {
+            \Illuminate\Support\Facades\Log::info("KOSPI_NIGHT: KIS '2001' 반환값({$kospiLastClose})이 KOSPI200 범위 이탈 → Yahoo ^KS200 폴백");
+            $kospiResponse = $this->getYahooChartData('^KS200', $timeframe);
+            $kospiData = json_decode($kospiResponse->getContent(), true);
+        }
+
         if (!isset($nqData['candles']) || !isset($kospiData['candles'])) {
             return $kospiResponse;
         }
-        
+
         $nqCandles = $nqData['candles'];
         $kospiCandles = $kospiData['candles'];
-        
+
         $lastKospiPrice = end($kospiCandles)['close'] ?? 362.45;
         
         $nightCandles = [];
@@ -1463,12 +1502,19 @@ class StockController extends Controller
                 $change = (float)$data['output']['prdy_vrss'];
                 $changePercent = (float)$data['output']['prdy_ctrt'];
                 $sign = $data['output']['prdy_vrss_sign'] ?? '3';
-                
-                if ($sign === '4' || $sign === '5') {
-                    $change = -$change;
-                    $changePercent = -$changePercent;
+
+                // KIS 는 prdy_vrss/prdy_ctrt 를 이미 부호 있는 값(예: -500, -0.14)으로 준다.
+                // 단순 -$change 는 하락(sign 4/5) 시 이중 부정(+0.14)이 되어 부호가 뒤집힌다.
+                // sign 기준으로 abs 를 강제해 부호를 확정한다 — WS fetchDomesticBatch 및
+                // 해외 fetchOverseasPriceFromKis 와 동일한 견고 처리(부호 출처 무관).
+                if ($sign === '4' || $sign === '5') { // 하한/하락
+                    $change = -abs($change);
+                    $changePercent = -abs($changePercent);
+                } else { // 상한/상승/보합
+                    $change = abs($change);
+                    $changePercent = abs($changePercent);
                 }
-                
+
                 $result = [
                     'price' => $price,
                     'change_amount' => $change,
