@@ -8,89 +8,51 @@
         <!-- 좌: 종목 정보 -->
         <div class="flex items-center gap-1.5 flex-1 min-w-0 flex-wrap">
           <!-- 티커 배지 -->
-          <span class="px-2 py-0.5 rounded-md text-[11px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
+          <span class="px-2 py-0.5 rounded-md text-[12px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
             {{ ticker }}
           </span>
           <!-- 종목명 -->
           <span class="text-sm font-black text-white/90 leading-tight break-all" :title="name">{{ name }}</span>
 
-          <!-- 세션 배지 -->
-          <span
-            v-if="session"
-            :class="[
-              'px-1.5 py-0.5 rounded text-[10px] font-extrabold leading-tight shrink-0',
-              session === '주간거래' ? 'text-emerald-400 bg-emerald-500/8 border border-emerald-500/20' : '',
-              session === '프리마켓' ? 'text-amber-400 bg-amber-500/8 border border-amber-500/20' : '',
-              session === '정규장'   ? 'text-pink-400  bg-pink-500/8  border border-pink-500/20'  : '',
-              (session === '애프터마켓' || session === '야간거래' || session === '거래중')
-                                     ? 'text-cyan-400  bg-cyan-500/8  border border-cyan-500/20'  : '',
-              session === '장마감'   ? 'text-base-content/35 bg-base-200/30 border border-base-content/10' : ''
-            ]"
-          >{{ session }}</span>
-
           <!-- 최고가 배지 -->
           <span
             v-if="!isIndex && maxPrice !== null"
-            class="px-1.5 py-0.5 rounded text-[9px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 shrink-0 leading-tight"
+            class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 shrink-0 leading-tight"
           >MAX {{ formattedMaxPrice }}</span>
-
-          <!-- 수익률 배지 -->
-          <span
-            v-if="!isIndex && avgPrice !== null && currentPrice !== null"
-            :class="[
-              'px-1.5 py-0.5 rounded text-[9px] font-extrabold font-mono shrink-0 leading-tight border',
-              yieldRate >= 0
-                ? (isKorean ? 'text-rose-400 bg-rose-500/8 border-rose-500/20'    : 'text-emerald-400 bg-emerald-500/8 border-emerald-500/20')
-                : (isKorean ? 'text-sky-400  bg-sky-500/8  border-sky-500/20'     : 'text-rose-400 bg-rose-500/8 border-rose-500/20')
-            ]"
-          >수익률 {{ yieldRate >= 0 ? '+' : '' }}{{ yieldRate.toFixed(2) }}%</span>
 
           <!-- 실적 발표일 배지 -->
           <span
             v-if="earningsDate"
-            class="px-1.5 py-0.5 rounded text-[9px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
+            class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
           >실적 {{ earningsDate }}</span>
 
           <div class="flex-1"></div>
-
-          <!-- 평단 관리 버튼 -->
-          <button
-            v-if="!isIndex"
-            @click.stop="openModal"
-            class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 hover:bg-amber-500/15 hover:border-amber-400/35 transition-all duration-200 cursor-pointer shrink-0 leading-tight"
-            :aria-label="`${ticker} 평단가 설정`"
-          >
-            <!-- lucide: Plus (tiny) -->
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            <span>{{ avgPrice !== null ? '평단 (' + (isKorean ? Math.round(avgPrice).toLocaleString() + '원' : '$' + avgPrice.toFixed(2)) + ')' : '평단 관리' }}</span>
-          </button>
         </div>
 
         <!-- 우: 현재가 + 등락률 -->
-        <div class="flex flex-col items-end shrink-0 gap-0.5">
+        <div class="flex flex-row items-center shrink-0 gap-2">
           <span
             :class="[
               'text-sm font-black font-mono transition-all duration-250 rounded px-1.5 py-0.5 leading-tight',
               priceFlash === 'up'
-                ? (isKorean ? 'bg-rose-500/18 text-rose-400 scale-105' : 'bg-emerald-500/18 text-emerald-400 scale-105 glow-active')
+                ? 'bg-rose-500/18 text-rose-400 scale-105'
                 : '',
               priceFlash === 'down'
-                ? (isKorean ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active' : 'bg-rose-500/18 text-rose-400 scale-105')
+                ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
                 : '',
-              !priceFlash ? 'text-white/90' : ''
+              !priceFlash
+                ? (changePercent >= 0 ? 'text-rose-400' : 'text-sky-400')
+                : ''
             ]"
           >{{ formattedHeaderPrice }}</span>
+          <!-- 등락액(주가 변동) — 주가 우측 표기 -->
           <span
-            v-if="changePercent !== null"
+            v-if="changeAmount !== null"
             :class="[
-              'text-[10px] font-extrabold font-mono px-1 py-0.5 rounded leading-tight',
-              changePercent >= 0
-                ? (isKorean ? 'text-rose-400 bg-rose-500/8'    : 'text-emerald-400 bg-emerald-500/8')
-                : (isKorean ? 'text-sky-400  bg-sky-500/8'     : 'text-rose-400    bg-rose-500/8')
+              'text-xs font-bold font-mono leading-tight shrink-0',
+              changeAmount >= 0 ? 'text-rose-400' : 'text-sky-400'
             ]"
-          >{{ changePercent >= 0 ? '+' : '' }}{{ changePercent.toFixed(2) }}%</span>
+          >{{ formattedChangeAmount }}</span>
         </div>
       </div>
 
@@ -115,44 +77,43 @@
 
     <!-- Chart Canvas Wrapper -->
     <div class="flex-1 w-full relative min-h-[170px] flex" ref="chartWrapper">
-      <!-- Lightweight Chart container -->
-      <div class="h-full w-[calc(100%-80px)]" ref="chartContainer"></div>
+      <!-- Lightweight Chart container (가격축 포함 전체 폭 사용 — 우측 빈 공간 제거) -->
+      <div class="h-full w-full" ref="chartContainer"></div>
 
       <!-- HTS Style Price Axis Label Overlay (Right 80px) -->
       <!-- 현재가 오버레이 -->
       <div
         v-if="currentPrice !== null && priceCoordinate !== null"
         :class="[
-          'absolute right-0 z-30 flex flex-col items-center justify-center text-[13px] font-black pl-3 pr-2 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
+          'absolute right-0 z-30 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
           changePercent >= 0
-            ? (isKorean ? 'bg-rose-600 border-rose-500 shadow-rose-900/35' : 'bg-emerald-600 border-emerald-500 shadow-emerald-900/35')
-            : (isKorean ? 'bg-indigo-650 border-indigo-550 shadow-indigo-900/35' : 'bg-rose-600 border-rose-500 shadow-rose-900/35')
+            ? 'bg-rose-600 border-rose-500 shadow-rose-900/35'
+            : 'bg-sky-600 border-sky-500 shadow-sky-900/35'
         ]"
         :style="{
           top: priceCoordinate + 'px',
           transform: 'translateY(-50%)',
-          width: '80px',
-          clipPath: 'polygon(10px 0%, 100% 0%, 100% 100%, 10px 100%, 0% 50%)'
+          width: '60px',
+          clipPath: 'polygon(7px 0%, 100% 0%, 100% 100%, 7px 100%, 0% 50%)'
         }"
       >
-        <div class="text-[14px] font-black mb-1 tracking-tight">{{ formattedPrice }}</div>
-        <div class="mb-0.5 text-[12px] opacity-95">{{ formattedChangePercent }}</div>
-        <div class="text-[12px] opacity-95">{{ formattedChangeAmount }}</div>
+        <div class="text-[12px] font-black mb-1 tracking-tight">{{ formattedPrice }}</div>
+        <div class="text-[11px] opacity-95">{{ formattedChangePercent }}</div>
       </div>
 
       <!-- 평단가 오버레이 -->
       <div
         v-if="!isIndex && avgPrice !== null && avgPriceCoordinate !== null"
-        class="absolute right-0 z-20 flex flex-col items-center justify-center text-[13px] font-black pl-3 pr-2 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
+        class="absolute right-0 z-20 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
         :style="{
           top: avgPriceCoordinate + 'px',
           transform: 'translateY(-50%)',
-          width: '80px',
-          clipPath: 'polygon(10px 0%, 100% 0%, 100% 100%, 10px 100%, 0% 50%)'
+          width: '60px',
+          clipPath: 'polygon(7px 0%, 100% 0%, 100% 100%, 7px 100%, 0% 50%)'
         }"
       >
-        <div class="text-[12px] font-black mb-0.5 tracking-tight uppercase opacity-90">MY AVG</div>
-        <div class="text-[13px] font-black">{{ isKorean ? Math.round(avgPrice).toLocaleString() : avgPrice.toFixed(2) }}</div>
+        <div class="text-[11px] font-black mb-1 tracking-tight opacity-90">평단</div>
+        <div class="text-[12px] font-black">{{ isKorean ? Math.round(avgPrice).toLocaleString() : avgPrice.toFixed(2) }}</div>
       </div>
     </div>
 
@@ -324,12 +285,9 @@ const timeframes = [
 
 // ── computed ───────────────────────────────────────────────────────────────
 const isKorean = computed(() => {
-  return /(\.KS|\.KQ)$/i.test(props.ticker) || /^\d+$/.test(props.ticker);
-});
-
-const yieldRate = computed(() => {
-  if (!avgPrice.value || !props.currentPrice) return 0;
-  return ((props.currentPrice - avgPrice.value) / avgPrice.value) * 100;
+  // KRX 코드: .KS/.KQ 접미사, 6자리 숫자, 또는 신형 영숫자 코드(예: 0167A0)
+  const t = props.ticker;
+  return /(\.KS|\.KQ)$/i.test(t) || /^\d{4}[0-9A-Za-z]{2}$/.test(t) || /^\d+$/.test(t);
 });
 
 const formattedPrice = computed(() => {
@@ -343,9 +301,9 @@ const formattedPrice = computed(() => {
 const formattedMaxPrice = computed(() => {
   if (maxPrice.value === null) return '---';
   if (isKorean.value) {
-    return `₩${Math.round(maxPrice.value).toLocaleString()}`;
+    return `${Math.round(maxPrice.value).toLocaleString()}원`;
   }
-  return `$${maxPrice.value.toFixed(2)}`;
+  return `${maxPrice.value.toFixed(2)}$`;
 });
 
 const formattedAvgPrice = computed(() => {
@@ -358,18 +316,22 @@ const formattedAvgPrice = computed(() => {
 
 const formattedHeaderPrice = computed(() => {
   if (props.currentPrice === null) return '---';
-  if (isKorean.value) {
-    return `₩${Math.round(props.currentPrice).toLocaleString()}`;
+  // 지수(나스닥100 선물·코스피 등)는 통화가 아니므로 기호 없이 숫자만 표시
+  if (isIndex.value) {
+    return props.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-  return `$${props.currentPrice.toFixed(2)}`;
+  if (isKorean.value) {
+    return `${Math.round(props.currentPrice).toLocaleString()}원`;
+  }
+  return `${props.currentPrice.toFixed(2)}$`;
 });
 
 const formattedHeaderAvgPrice = computed(() => {
   if (avgPrice.value === null) return '';
   if (isKorean.value) {
-    return `평단: ₩${Math.round(avgPrice.value).toLocaleString()}`;
+    return `평단: ${Math.round(avgPrice.value).toLocaleString()}원`;
   }
-  return `평단: $${avgPrice.value.toFixed(2)}`;
+  return `평단: ${avgPrice.value.toFixed(2)}$`;
 });
 
 const formattedChangePercent = computed(() => {
@@ -439,6 +401,8 @@ function initChart() {
     timeScale: {
       borderVisible: false,
       timeVisible: false,
+      // 새 봉이 생기면 우측 끝(실시간)에 있을 때 자동으로 시야를 이동 → 차트가 자연스럽게 따라감
+      shiftVisibleRangeOnNewBar: true,
       tickMarkFormatter: (time, tickMarkType, locale) => {
         if (typeof time === 'number') {
           const date = new Date(time * 1000);
@@ -461,7 +425,8 @@ function initChart() {
     },
     rightPriceScale: {
       borderVisible: false,
-      width: 65,
+      // 현재가/평단가 오버레이(62px)가 캔들을 가리지 않고 y축 금액 영역 안에 들어가도록 폭을 맞춤
+      width: 66,
       scaleMargins: {
         top: 0.1,
         bottom: 0.25
@@ -469,8 +434,9 @@ function initChart() {
     }
   });
 
-  const upColor = isKorean.value ? '#f43f5e' : '#10b981';
-  const downColor = isKorean.value ? '#10b981' : '#f43f5e';
+  // 국내·미국 구분 없이 상승=빨강(#f43f5e), 하락=파랑(#38bdf8)으로 통일
+  const upColor = '#f43f5e';
+  const downColor = '#38bdf8';
 
   candlestickSeries.value = chart.value.addSeries(CandlestickSeries, {
     upColor: upColor,
@@ -518,7 +484,7 @@ function initChart() {
   resizeObserver.value = new ResizeObserver((entries) => {
     if (entries.length === 0 || !chart.value) return;
     const { width, height } = entries[0].contentRect;
-    const chartWidth = Math.max(0, width - 80);
+    const chartWidth = Math.max(0, width); // 래퍼 전체 폭 사용(가격축 포함) — 우측 빈 공간 제거
     requestAnimationFrame(() => {
       if (chart.value) {
         chart.value.resize(chartWidth, height);
@@ -573,29 +539,38 @@ function updateChartData(candles) {
     color: chartCandles[idx].close >= chartCandles[idx].open ? upVolColor : downVolColor
   }));
 
-  if (hasRenderedData.value && lastCandlesCount.value === candles.length) {
-    const lastIdx = candles.length - 1;
-    if (lastIdx >= 0) {
-      candlestickSeries.value.update(chartCandles[lastIdx]);
-      volumeSeries.value.update(chartVolumes[lastIdx]);
-    }
-  } else {
+  // 최초 렌더·타임프레임/종목 변경·봉 개수 감소(데이터 교체)면 전체 재설정,
+  // 그 외(실시간 갱신·새 봉 추가)는 증분 update() 로 처리해 부드럽게 움직이고
+  // 새 봉이 생겨도 자동 스크롤(shiftVisibleRangeOnNewBar)로 최신 봉이 화면에 따라온다.
+  const isFullReload = !hasRenderedData.value
+    || shouldFitContent.value
+    || candles.length < lastCandlesCount.value;
+
+  if (isFullReload) {
     candlestickSeries.value.setData(chartCandles);
     volumeSeries.value.setData(chartVolumes);
     hasRenderedData.value = true;
+  } else {
+    // 직전 마지막 봉부터 끝까지 update(): 마지막 봉 가격 갱신 + 새로 생긴 봉(들) 추가
+    const start = Math.max(0, lastCandlesCount.value - 1);
+    for (let i = start; i < chartCandles.length; i++) {
+      candlestickSeries.value.update(chartCandles[i]);
+      volumeSeries.value.update(chartVolumes[i]);
+    }
   }
   lastCandlesCount.value = candles.length;
 
   if (shouldFitContent.value && chartContainer.value && chartContainer.value.clientWidth > 0) {
     const len = chartCandles.length;
-    const showCount = (props.ticker === 'NQ=F' || props.ticker === 'KOSPI_NIGHT' || props.ticker === 'KOSPI200') ? 100 : 40;
-    if (len > 0 && len > showCount) {
+    // 개별 종목은 60봉(3분봉 기준 3시간), 지수는 100봉 노출
+    const showCount = (props.ticker === 'NQ=F' || props.ticker === 'KOSPI_NIGHT' || props.ticker === 'KOSPI200') ? 100 : 60;
+    if (len > 0) {
+      // from 을 0 미만으로 내려가지 않게 클램프 → 첫 봉 왼쪽 빈 공간 제거.
+      // to 는 마지막 봉 바로 뒤(0.5칸)까지만 → 우측 빈 공간 최소화하여 캔들이 꽉 차게.
       chart.value.timeScale().setVisibleLogicalRange({
-        from: len - showCount,
-        to: len - 1 + 1.5
+        from: Math.max(0, len - showCount),
+        to: len - 0.5,
       });
-    } else {
-      chart.value.timeScale().fitContent();
     }
     shouldFitContent.value = false;
   }
@@ -835,8 +810,9 @@ watch(
     loadAvgPrice();
     loadEarningsDate();
     if (candlestickSeries.value) {
-      const upColor = isKorean.value ? '#f43f5e' : '#10b981';
-      const downColor = isKorean.value ? '#10b981' : '#f43f5e';
+      // 국내·미국 구분 없이 상승=빨강(#f43f5e), 하락=파랑(#38bdf8)으로 통일
+      const upColor = '#f43f5e';
+      const downColor = '#38bdf8';
       candlestickSeries.value.applyOptions({
         upColor: upColor,
         downColor: downColor,

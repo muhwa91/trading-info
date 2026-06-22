@@ -8,6 +8,7 @@ use App\Models\Portfolio;
 use App\Models\Stock;
 use App\Models\Watchlist;
 use App\Services\FxService;
+use App\Services\MarketSessionService;
 use App\Services\PnlService;
 use App\Services\PriceService;
 use Illuminate\Http\JsonResponse;
@@ -86,18 +87,21 @@ class DashboardController extends Controller
         'after'   => 'AFT',
     ];
 
-    private PriceService $priceService;
-    private FxService    $fxService;
-    private PnlService   $pnlService;
+    private PriceService        $priceService;
+    private FxService           $fxService;
+    private PnlService          $pnlService;
+    private MarketSessionService $sessionService;
 
     public function __construct(
         PriceService $priceService,
         FxService $fxService,
-        PnlService $pnlService
+        PnlService $pnlService,
+        MarketSessionService $sessionService
     ) {
-        $this->priceService = $priceService;
-        $this->fxService    = $fxService;
-        $this->pnlService   = $pnlService;
+        $this->priceService   = $priceService;
+        $this->fxService      = $fxService;
+        $this->pnlService     = $pnlService;
+        $this->sessionService = $sessionService;
     }
 
     /**
@@ -162,10 +166,19 @@ class DashboardController extends Controller
                 continue;
             }
 
-            $stockId     = (int)$holding->stock_id;
-            $priceData   = $prices[$stockId] ?? null;
-            $hasPrice    = ($priceData !== null && isset($priceData['price']));
+            $stockId      = (int)$holding->stock_id;
+            $priceData    = $prices[$stockId] ?? null;
+            $hasPrice     = ($priceData !== null && isset($priceData['price']));
             $currentPrice = $hasPrice ? (float)$priceData['price'] : 0.0;
+
+            // US 종목 전용: 정규장 마지막 종가 (KIS base 필드).
+            // KR 종목은 regular_close_price = null (장전 손익 없음).
+            $regularClosePrice = null;
+            if ($hasPrice && $stock->market === 'US') {
+                $regularClosePrice = isset($priceData['regular_close']) && (float)$priceData['regular_close'] > 0
+                    ? (float)$priceData['regular_close']
+                    : $currentPrice; // base 없으면 current 로 폴백 → 장전 손익 = 0
+            }
 
             $qty    = (float)$holding->quantity;
             $avg    = (float)$holding->average_price;
@@ -173,31 +186,38 @@ class DashboardController extends Controller
 
             $evaluation = null;
             if ($hasPrice) {
+                // 미실현손익 계산 기준: US 는 정규장 종가(regular_close), KR 은 current_price
+                $evalPrice = ($stock->market === 'US' && $regularClosePrice !== null)
+                    ? $regularClosePrice
+                    : $currentPrice;
+
                 $evaluation = $this->pnlService->evaluate(
                     $qty,
                     $avg,
                     $fxBuy,
                     (string)$stock->currency,
-                    $currentPrice,
+                    $evalPrice,
                     $fxNow
                 );
                 $evaluations[] = $evaluation;
             }
 
             $row = [
-                'portfolio_id'   => (int)$holding->id,
-                'stock_id'       => $stockId,
-                'symbol'         => $stock->symbol,
-                'name'           => $stock->name,
-                'market'         => $stock->market,
-                'currency'       => $stock->currency,
-                'type'           => $stock->type,
-                'quantity'       => $holding->quantity,
-                'average_price'  => $holding->average_price,
-                'avg_fx_rate'    => $holding->avg_fx_rate,
-                'current_price'  => $hasPrice ? $currentPrice : null,
-                'session_badge'  => $sessionBadge,
-                'price_available' => $hasPrice,
+                'portfolio_id'        => (int)$holding->id,
+                'stock_id'            => $stockId,
+                'symbol'              => $stock->symbol,
+                'name'                => $stock->name,
+                'market'              => $stock->market,
+                'currency'            => $stock->currency,
+                'type'                => $stock->type,
+                'quantity'            => $holding->quantity,
+                'average_price'       => $holding->average_price,
+                'avg_fx_rate'         => $holding->avg_fx_rate,
+                'current_price'       => $hasPrice ? $currentPrice : null,
+                'regular_close_price' => $regularClosePrice,
+                'session_badge'       => $sessionBadge,
+                'live_session'        => $this->resolveHoldingSession($stock),
+                'price_available'     => $hasPrice,
             ];
 
             if ($evaluation !== null) {
@@ -269,5 +289,22 @@ class DashboardController extends Controller
     {
         $allowed = ['regular', 'pre', 'after'];
         return in_array($raw, $allowed, true) ? $raw : 'regular';
+    }
+
+    /**
+     * 종목의 시장(US/KR)에 따라 현재 라이브 세션명을 반환한다.
+     *
+     * 반환 예: '정규장' | '프리마켓' | '애프터마켓' | '주간거래' | '장마감'
+     */
+    private function resolveHoldingSession(Stock $stock): string
+    {
+        $now = time();
+        if ($stock->market === 'US') {
+            return $this->sessionService->getUsSession($now);
+        }
+        if ($stock->market === 'KR') {
+            return $this->sessionService->getKrSession($now);
+        }
+        return '장마감';
     }
 }

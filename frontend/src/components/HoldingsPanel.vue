@@ -24,6 +24,17 @@
     <!-- 섹션 헤더 -->
     <div class="flex items-center justify-between px-4 md:px-5 py-3.5 border-b border-base-content/8">
       <div class="flex items-center gap-2">
+        <!-- 접기/펼치기 토글 -->
+        <button
+          @click="holdingsCollapsed = !holdingsCollapsed"
+          class="w-6 h-6 flex items-center justify-center rounded-md text-base-content/50 hover:text-white hover:bg-base-200/60 transition-all duration-200 cursor-pointer shrink-0"
+          :aria-expanded="!holdingsCollapsed"
+          aria-label="보유 종목 접기/펼치기"
+        >
+          <svg :class="['h-3.5 w-3.5 transition-transform duration-200', holdingsCollapsed ? '-rotate-90' : '']" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
         </svg>
@@ -46,7 +57,7 @@
     </div>
 
     <!-- 빈 상태 -->
-    <div v-if="holdings.length === 0" class="flex flex-col items-center justify-center py-14 gap-3 select-none">
+    <div v-if="holdings.length === 0" v-show="!holdingsCollapsed" class="flex flex-col items-center justify-center py-14 gap-3 select-none">
       <div class="w-12 h-12 rounded-xl border-2 border-dashed border-base-content/12 flex items-center justify-center">
         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
@@ -59,28 +70,52 @@
     </div>
 
     <!-- 보유 종목 테이블 -->
-    <div v-else class="overflow-x-auto custom-scrollbar">
-      <table class="w-full min-w-200" role="table" aria-label="보유 종목 목록">
+    <div v-else v-show="!holdingsCollapsed" class="overflow-x-auto custom-scrollbar">
+      <table class="w-full min-w-240" role="table" aria-label="보유 종목 목록">
         <thead>
           <tr class="text-xs font-extrabold text-base-content/35 tracking-wider uppercase border-b border-base-content/6">
+            <!-- 드래그 핸들 열 -->
+            <th class="w-8 px-2 py-3"></th>
             <th class="text-left px-4 md:px-5 py-3 font-extrabold">종목</th>
+            <!-- 세션 배지 열 헤더 (빈 헤더, 수량 앞) -->
+            <th class="px-1 py-3 w-20"></th>
             <th class="text-right px-3 py-3 font-extrabold">수량</th>
             <th class="text-right px-3 py-3 font-extrabold">평단가</th>
             <th class="text-right px-3 py-3 font-extrabold">현재가</th>
             <th class="text-right px-3 py-3 font-extrabold">미실현손익</th>
             <th class="text-right px-3 py-3 font-extrabold">손익률</th>
+            <th class="text-right px-3 py-3 font-extrabold">평가금액</th>
             <th class="text-center px-4 md:px-5 py-3 font-extrabold">관리</th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="item in holdings"
+            v-for="item in orderedHoldings"
             :key="item.portfolio_id"
-            class="border-b border-base-content/4 last:border-b-0 hover:bg-base-200/20 transition-colors duration-150 cursor-pointer"
+            :draggable="true"
+            :class="[
+              'border-b border-base-content/4 last:border-b-0 hover:bg-base-200/20 transition-colors duration-150 cursor-pointer',
+              dragOverId === item.portfolio_id ? 'bg-indigo-500/10 border-indigo-500/30' : ''
+            ]"
             role="row"
             :title="`${item.name || item.symbol} 차트 보기`"
-            @click.stop="openChartModal(item)"
+            @click.stop="onRowClick(item)"
+            @dragstart="onDragStart($event, item.portfolio_id)"
+            @dragover.prevent="onDragOver($event, item.portfolio_id)"
+            @dragleave="onDragLeave"
+            @drop.prevent="onDrop($event, item.portfolio_id)"
+            @dragend="onDragEnd"
           >
+            <!-- 드래그 핸들 -->
+            <td
+              class="w-8 px-2 py-3.5 text-center"
+              @click.stop
+              title="드래그하여 순서 변경"
+              aria-label="드래그 핸들"
+            >
+              <span class="text-base-content/20 hover:text-base-content/50 cursor-grab active:cursor-grabbing select-none text-base leading-none">⠿</span>
+            </td>
+
             <!-- 종목명·심볼·마켓 -->
             <td class="px-4 md:px-5 py-3.5">
               <div class="flex flex-col gap-0.5">
@@ -97,6 +132,19 @@
               </div>
             </td>
 
+            <!-- 세션 배지 셀 -->
+            <!-- live_session(백엔드, 공휴일 정확)이 있으면 우선 사용; 없으면 클라이언트 계산값 폴백 -->
+            <td class="px-2 py-3.5 text-center" @click.stop>
+              <span
+                :class="[
+                  'inline-flex items-center justify-center px-4 h-8 rounded-lg border text-xs font-extrabold leading-tight whitespace-nowrap',
+                  sessionBadgeStyle(itemSessionCode(item))
+                ]"
+              >
+                {{ sessionLabel(itemSessionCode(item)) }}
+              </span>
+            </td>
+
             <!-- 수량 -->
             <td class="px-3 py-3.5 text-right">
               <span class="text-sm font-bold font-mono text-white/80">{{ formatQuantity(item.quantity) }}</span>
@@ -105,7 +153,8 @@
             <!-- 평단가 -->
             <td class="px-3 py-3.5 text-right">
               <span class="text-sm font-bold font-mono text-base-content/60">
-                {{ formatPrice(item.currency, item.average_price) }}
+                <template v-if="item.market === 'US'">{{ fmtUSAvg(item) }}</template>
+                <template v-else>{{ formatPrice(item.currency, item.average_price) }}</template>
               </span>
             </td>
 
@@ -113,31 +162,41 @@
             <td class="px-3 py-3.5 text-right">
               <span
                 v-if="item.price_available && item.current_price !== null"
-                class="text-sm font-extrabold font-mono"
-                :class="item.market === 'US'
+                class="text-sm font-extrabold font-mono inline-block px-1 rounded transition-colors duration-300"
+                :class="[item.market === 'US'
                   ? profitColorClass(calcUSDProfit(item), 'us')
-                  : profitColorClass(item.profitKRW, 'kr')"
+                  : profitColorClass(item.profitKRW, 'kr'), flashCellClass(item)]"
               >
-                {{ formatPrice(item.currency, item.current_price) }}
+                <template v-if="item.market === 'US'">{{ fmtUSCurrentPrice(item) }}</template>
+                <template v-else>{{ formatPrice(item.currency, item.current_price) }}</template>
               </span>
               <span v-else class="text-sm font-mono text-base-content/20">—</span>
             </td>
 
-            <!-- 미실현손익 -->
+            <!-- 미실현손익 (US: 정규장 종가 기준 + 장전 손익 / KR: 서버 계산값) -->
             <td class="px-3 py-3.5 text-right">
               <template v-if="item.market === 'US'">
-                <span
-                  v-if="item.price_available && item.current_price !== null && item.average_price !== null"
-                  class="text-sm font-black font-mono"
-                  :class="profitColorClass(calcUSDProfit(item), 'us')"
-                >{{ formatProfitUSD(calcUSDProfit(item)) }}</span>
+                <template v-if="item.price_available && item.current_price !== null && item.average_price !== null">
+                  <!-- 미실현손익: 애프터/주간 포함 총 손익 (현재가 − 평단) × 수량 — 증권사 '애프터/주간 ON' 과 동일 -->
+                  <span
+                    class="text-sm font-black font-mono inline-block px-1 rounded transition-colors duration-300"
+                    :class="[profitColorClass(calcUSDProfit(item), 'us'), flashCellClass(item)]"
+                  >{{ fmtUSProfit(item) }}</span>
+                  <!-- 정규장(종가 기준) 손익: (정규장 종가 − 평단) × 수량. 연장 차이 없으면 숨김 -->
+                  <span
+                    v-if="calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0"
+                    class="text-xs font-bold font-mono block mt-0.5 opacity-75"
+                    :class="profitColorClass(calcUSUnrealizedProfit(item), 'us')"
+                    title="정규장 종가 기준 손익(증권사 애프터/주간 OFF 와 동일)"
+                  >정규장 {{ formatProfitUSD(calcUSUnrealizedProfit(item)) }}</span>
+                </template>
                 <span v-else class="text-sm font-mono text-base-content/20">—</span>
               </template>
               <template v-else>
                 <span
                   v-if="item.price_available && item.profitKRW !== null"
-                  class="text-sm font-black font-mono"
-                  :class="profitColorClass(item.profitKRW, 'kr')"
+                  class="text-sm font-black font-mono inline-block px-1 rounded transition-colors duration-300"
+                  :class="[profitColorClass(item.profitKRW, 'kr'), flashCellClass(item)]"
                 >{{ formatProfitWon(item.profitKRW) }}</span>
                 <span v-else class="text-sm font-mono text-base-content/20">—</span>
               </template>
@@ -146,26 +205,58 @@
             <!-- 손익률 -->
             <td class="px-3 py-3.5 text-right">
               <template v-if="item.market === 'US'">
-                <span
-                  v-if="item.price_available && item.current_price !== null && item.average_price !== null"
-                  class="text-sm font-extrabold font-mono"
-                  :class="profitColorClass(calcUSDProfit(item), 'us')"
-                >{{ formatProfitRate(item.profitRate) }}</span>
+                <template v-if="item.price_available && item.current_price !== null && item.average_price !== null">
+                  <!-- 손익률: 애프터/주간 포함 총 손익률 (현재가 기준, 금액과 일치) -->
+                  <span
+                    class="text-sm font-extrabold font-mono inline-block px-1 rounded transition-colors duration-300"
+                    :class="[profitColorClass(calcUSDProfit(item), 'us'), flashCellClass(item)]"
+                  >{{ formatProfitRate(calcUSDProfitRate(item)) }}</span>
+                  <!-- 정규장(종가 기준) 손익률 -->
+                  <span
+                    v-if="calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0"
+                    class="text-xs font-bold font-mono block mt-0.5 opacity-75"
+                    :class="profitColorClass(calcUSUnrealizedProfit(item), 'us')"
+                    title="정규장 종가 기준 손익률(증권사 애프터/주간 OFF 와 동일)"
+                  >정규장 {{ formatProfitRate(calcUSUnrealizedProfitRate(item)) }}</span>
+                </template>
                 <span v-else class="text-sm font-mono text-base-content/20">—</span>
               </template>
               <template v-else>
                 <span
                   v-if="item.price_available && item.profitKRW !== null"
-                  class="text-sm font-extrabold font-mono"
-                  :class="profitColorClass(item.profitKRW, 'kr')"
+                  class="text-sm font-extrabold font-mono inline-block px-1 rounded transition-colors duration-300"
+                  :class="[profitColorClass(item.profitKRW, 'kr'), flashCellClass(item)]"
                 >{{ formatProfitRate(item.profitRate) }}</span>
                 <span v-else class="text-sm font-mono text-base-content/20">—</span>
               </template>
             </td>
 
+            <!-- 평가금액 (US: 총=연장 현재가 기준 + 정규장=종가 기준, 정규장 중엔 정규장 줄 숨김) -->
+            <td class="px-3 py-3.5 text-right">
+              <template v-if="fmtMarketValue(item) !== null">
+                <span class="text-sm font-bold font-mono text-white/70 inline-block px-1 rounded transition-colors duration-300" :class="flashCellClass(item)">{{ fmtMarketValue(item) }}</span>
+                <span
+                  v-if="item.market === 'US' && calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0 && fmtRegularMarketValue(item) !== null"
+                  class="text-xs font-mono text-base-content/45 block mt-0.5"
+                  title="정규장 종가 기준 평가금액"
+                >정규장 {{ fmtRegularMarketValue(item) }}</span>
+              </template>
+              <span v-else class="text-sm font-mono text-base-content/20">—</span>
+            </td>
+
             <!-- 관리 버튼 -->
             <td class="px-4 md:px-5 py-3.5 text-center">
               <div class="flex items-center justify-center gap-1.5">
+                <!-- $ / ₩ 토글 (US 종목만) -->
+                <button
+                  v-if="item.market === 'US'"
+                  @click.stop="toggleCurrency(item.portfolio_id)"
+                  :disabled="!props.exchangeRate?.USD_KRW"
+                  :title="getCurrencyMode(item.portfolio_id) === 'USD' ? '원화로 전환' : '달러로 전환'"
+                  :aria-label="`${item.symbol} 통화 전환`"
+                  class="btn btn-xs btn-ghost border border-base-content/10 hover:border-emerald-500/40 hover:bg-emerald-500/8 text-base-content/40 hover:text-emerald-400 rounded-lg cursor-pointer transition-all duration-150 disabled:opacity-30 font-mono text-[11px]"
+                >{{ getCurrencyMode(item.portfolio_id) === 'USD' ? '₩' : '$' }}</button>
+                <!-- 수정 버튼 -->
                 <button
                   @click.stop="openHoldingModal(item)"
                   class="btn btn-xs btn-ghost border border-base-content/10 hover:border-indigo-500/40 hover:bg-indigo-500/8 text-base-content/40 hover:text-indigo-400 rounded-lg cursor-pointer transition-all duration-150"
@@ -196,7 +287,10 @@
 
     <!-- ══════════════════════════════════════════════════════
          차트 모달 (행 클릭 시)
+         ※ Teleport: 조상의 backdrop-blur(filter)로 인해 fixed 기준이
+           패널로 한정되는 문제를 막기 위해 body 직속으로 렌더한다.
     ══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
     <Transition name="modal-fade">
       <div
         v-if="showChartModal"
@@ -271,10 +365,14 @@
         </div>
       </div>
     </Transition>
+    </Teleport>
 
     <!-- ══════════════════════════════════════════════════════
          보유 종목 추가/수정 모달
+         ※ Teleport: 조상의 backdrop-blur(filter)로 인해 fixed 기준이
+           패널로 한정되는 문제를 막기 위해 body 직속으로 렌더한다.
     ══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
     <Transition name="modal-fade">
       <div
         v-if="showHoldingModal"
@@ -286,9 +384,9 @@
       >
         <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" @click="closeHoldingModal"></div>
 
-        <div class="relative z-10 w-full max-w-md bg-base-100 border border-base-content/12 rounded-2xl shadow-2xl overflow-hidden">
+        <div class="relative z-10 w-full max-w-md bg-base-100 border border-base-content/12 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
           <!-- 모달 헤더 -->
-          <div class="flex items-center justify-between px-5 py-4 border-b border-base-content/8">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-base-content/8 shrink-0">
             <h3 class="text-sm font-black text-white tracking-tight">
               {{ editingHolding ? '보유 종목 수정' : '보유 종목 추가' }}
             </h3>
@@ -304,7 +402,7 @@
           </div>
 
           <!-- 모달 폼 -->
-          <form @submit.prevent="submitHoldingForm" class="p-4 sm:p-5 space-y-4">
+          <form @submit.prevent="submitHoldingForm" class="p-4 sm:p-5 space-y-4 overflow-y-auto custom-scrollbar">
 
             <!-- 종목 선택 (추가 모드만) -->
             <div v-if="!editingHolding" class="space-y-1.5" ref="holdingSearchContainer">
@@ -411,8 +509,9 @@
                 id="hp-qty"
                 v-model="holdingForm.quantity"
                 type="number"
-                min="0.0001"
-                step="any"
+                min="1"
+                step="1"
+                inputmode="numeric"
                 placeholder="보유 수량"
                 class="input input-sm input-bordered w-full font-mono text-sm focus:outline-none focus:border-indigo-500/60 bg-base-200/50 rounded-lg"
                 :class="formErrors.quantity ? 'border-error/60' : ''"
@@ -433,8 +532,9 @@
                 id="hp-avg"
                 v-model="holdingForm.average_price"
                 type="number"
-                min="0.0001"
-                step="any"
+                :min="holdingFormMarket === 'KR' ? '1' : '0.0001'"
+                :step="holdingFormMarket === 'KR' ? '1' : 'any'"
+                :inputmode="holdingFormMarket === 'KR' ? 'numeric' : 'decimal'"
                 :placeholder="holdingFormMarket === 'KR' ? '매입 평단 (원)' : '매입 평단 (USD)'"
                 class="input input-sm input-bordered w-full font-mono text-sm focus:outline-none focus:border-indigo-500/60 bg-base-200/50 rounded-lg"
                 :class="formErrors.average_price ? 'border-error/60' : ''"
@@ -495,12 +595,13 @@
         </div>
       </div>
     </Transition>
+    </Teleport>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import axios from 'axios';
 import StockChart from './StockChart.vue';
 import { localSearch, normalizeKrTicker, SEARCHABLE_STOCKS } from '../stocksKnown.js';
@@ -528,6 +629,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  exchangeRate: {
+    type: Object,
+    default: null,  // { USD_KRW: number, ... } | null
+  },
 });
 
 const emit = defineEmits(['refresh']);
@@ -554,6 +659,47 @@ let holdingSearchDebounce = null;
 const formErrors = ref({});
 const actionLoading = ref(false);
 
+// ── 접기/펼치기 (보유종목 패널) ───────────────────────────────
+const holdingsCollapsed = ref(localStorage.getItem('holdingsCollapsed') === 'true');
+watch(holdingsCollapsed, (val) => {
+  localStorage.setItem('holdingsCollapsed', val);
+});
+
+// ── 값 변동 플래시 (현재가/미실현손익/손익률/평가금액 블록 색 변화) ──
+// 현재가가 바뀌면 해당 행을 잠깐 빨강(상승)/파랑(하락)으로 깜빡인다(사이드바와 동일 톤).
+const flashMap = ref({});   // portfolio_id -> 'up' | 'down'
+const _prevPrices = {};     // portfolio_id -> 직전 current_price
+const _flashTimers = {};
+watch(
+  () => props.holdings,
+  (list) => {
+    for (const item of (list || [])) {
+      const id = item.portfolio_id;
+      const cur = item.current_price;
+      const prev = _prevPrices[id];
+      if (prev != null && cur != null && cur !== prev) {
+        flashMap.value = { ...flashMap.value, [id]: cur > prev ? 'up' : 'down' };
+        clearTimeout(_flashTimers[id]);
+        _flashTimers[id] = setTimeout(() => {
+          const m = { ...flashMap.value };
+          delete m[id];
+          flashMap.value = m;
+        }, 700);
+      }
+      if (cur != null) _prevPrices[id] = cur;
+    }
+  },
+  { deep: true }
+);
+
+// 셀 플래시 배경 클래스 (상승=빨강, 하락=파랑)
+function flashCellClass(item) {
+  const f = flashMap.value[item.portfolio_id];
+  if (f === 'up') return 'bg-rose-500/15';
+  if (f === 'down') return 'bg-sky-500/15';
+  return '';
+}
+
 // ── 토스트 ────────────────────────────────────────────────────
 const toast = ref({ show: false, type: 'success', message: '' });
 let toastTimer = null;
@@ -570,6 +716,340 @@ let chartPollTimer = null;
 
 // ── 템플릿 ref ────────────────────────────────────────────────
 const holdingSearchContainer = ref(null);
+
+// ── 세션 배지: 타임존 기반 실시간 30초 갱신 ──────────────────
+
+function getMarketSession(market) {
+  const now = new Date();
+
+  if (market === 'KR') {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Seoul',
+      weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
+    const dow = parts.weekday;
+    const h = parseInt(parts.hour, 10);
+    const m = parseInt(parts.minute, 10);
+    const timeVal = h * 100 + m;
+    const isWeekday = !['Sat','Sun'].includes(dow);
+    if (isWeekday && timeVal >= 900 && timeVal <= 1530) return 'REG_KR';
+    return 'CLOSED';
+  }
+
+  if (market === 'US') {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
+    const dow = parts.weekday;
+    const h = parseInt(parts.hour, 10);
+    const m = parseInt(parts.minute, 10);
+    const timeVal = h * 100 + m;
+
+    if (dow === 'Sat') return 'CLOSED';
+    if (dow === 'Sun' && timeVal < 2000) return 'CLOSED';
+    if (dow === 'Fri' && timeVal >= 2000) return 'CLOSED';
+
+    if (timeVal >= 2000 || timeVal < 330) return 'EXT_NIGHT';
+    if (timeVal >= 400 && timeVal < 930) return 'PRE';
+    if (timeVal >= 930 && timeVal < 1600) return 'REG_US';
+    if (timeVal >= 1600 && timeVal < 1930) return 'AFT';
+    return 'CLOSED';
+  }
+
+  return 'CLOSED';
+}
+
+function sessionLabel(code) {
+  switch(code) {
+    case 'REG_KR': return '정규장';
+    case 'REG_US': return '정규장';
+    case 'PRE': return '프리마켓';
+    case 'AFT': return '애프터마켓';
+    case 'EXT_NIGHT': return '주간거래';
+    case 'CLOSED': return '장마감';
+    default: return '장마감';
+  }
+}
+
+function sessionBadgeStyle(code) {
+  switch(code) {
+    case 'EXT_NIGHT': return 'text-emerald-400 bg-emerald-500/8 border-emerald-500/20';
+    case 'PRE': return 'text-amber-400 bg-amber-500/8 border-amber-500/20';
+    case 'REG_KR':
+    case 'REG_US': return 'text-pink-400 bg-pink-500/8 border-pink-500/20';
+    case 'AFT': return 'text-cyan-400 bg-cyan-500/8 border-cyan-500/20';
+    case 'CLOSED':
+    default: return 'text-base-content/40 bg-base-200/40 border-base-content/10';
+  }
+}
+
+const sessionNow = ref(new Date());
+let sessionTimer = null;
+
+const sessionCodeKR = computed(() => {
+  void sessionNow.value;
+  return getMarketSession('KR');
+});
+const sessionCodeUS = computed(() => {
+  void sessionNow.value;
+  return getMarketSession('US');
+});
+
+/**
+ * 백엔드에서 내려온 한글 세션 라벨(live_session)을 내부 코드로 변환한다.
+ * 백엔드 응답 예: '정규장', '프리마켓', '애프터마켓', '주간거래', '장마감'
+ */
+function liveSessionToCode(liveSession, market) {
+  switch (liveSession) {
+    case '정규장':     return market === 'KR' ? 'REG_KR' : 'REG_US';
+    case '프리마켓':   return 'PRE';
+    case '애프터마켓': return 'AFT';
+    case '주간거래':   return 'EXT_NIGHT';
+    case '장마감':     return 'CLOSED';
+    default:           return 'CLOSED';
+  }
+}
+
+/**
+ * 종목별 세션 코드 결정.
+ * item.live_session(백엔드, 공휴일 정확)이 있으면 우선 사용하고,
+ * 없으면 클라이언트 시간 계산 값으로 폴백한다.
+ */
+function itemSessionCode(item) {
+  if (item.live_session) {
+    return liveSessionToCode(item.live_session, item.market);
+  }
+  // 폴백: 클라이언트 계산 (공휴일 불인식)
+  return item.market === 'KR' ? sessionCodeKR.value : sessionCodeUS.value;
+}
+
+// ── 통화 토글 (US 종목 달러/원화) ────────────────────────────
+const HOLDINGS_CURRENCY_KEY = 'holdings_currency';
+
+function loadCurrencyMap() {
+  try {
+    const raw = localStorage.getItem(HOLDINGS_CURRENCY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch { return {}; }
+}
+
+function saveCurrencyMap(map) {
+  try { localStorage.setItem(HOLDINGS_CURRENCY_KEY, JSON.stringify(map)); } catch {}
+}
+
+const currencyMap = ref(loadCurrencyMap());
+
+function getCurrencyMode(portfolioId) {
+  return currencyMap.value[portfolioId] || 'USD';
+}
+
+function toggleCurrency(portfolioId) {
+  const current = getCurrencyMode(portfolioId);
+  const next = current === 'USD' ? 'KRW' : 'USD';
+  const updated = { ...currencyMap.value, [portfolioId]: next };
+  currencyMap.value = updated;
+  saveCurrencyMap(updated);
+}
+
+function usdToKrw(usdValue) {
+  const rate = props.exchangeRate?.USD_KRW;
+  if (!rate || rate <= 0 || usdValue === null || usdValue === undefined) return null;
+  return usdValue * rate;
+}
+
+function fmtUSAvg(item) {
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(Number(item.average_price));
+    return won !== null ? formatWon(won) : formatPrice(item.currency, item.average_price);
+  }
+  return formatPrice(item.currency, item.average_price);
+}
+
+function fmtUSCurrentPrice(item) {
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(Number(item.current_price));
+    return won !== null ? formatWon(won) : formatPrice(item.currency, item.current_price);
+  }
+  return formatPrice(item.currency, item.current_price);
+}
+
+function fmtUSProfit(item) {
+  const profit = calcUSDProfit(item);
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(profit);
+    return won !== null ? formatProfitWon(won) : formatProfitUSD(profit);
+  }
+  return formatProfitUSD(profit);
+}
+
+function fmtMarketValue(item) {
+  if (!item.price_available || item.current_price === null) return null;
+  const cur = Number(item.current_price);
+  const qty = Number(item.quantity);
+  if (isNaN(cur) || isNaN(qty)) return null;
+  const value = cur * qty;
+
+  if (item.market === 'KR') {
+    return formatWon(value);
+  }
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(value);
+    return won !== null ? formatWon(won) : `${value.toFixed(2)}$`;
+  }
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}$`;
+}
+
+// US 정규장 평가금액 = 정규장 종가 × 수량 (통화 모드 반영). regular_close_price 없으면 null.
+function fmtRegularMarketValue(item) {
+  if (item.market !== 'US' || item.regular_close_price == null) return null;
+  const reg = Number(item.regular_close_price);
+  const qty = Number(item.quantity);
+  if (isNaN(reg) || isNaN(qty)) return null;
+  const value = reg * qty;
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(value);
+    return won !== null ? formatWon(won) : `${value.toFixed(2)}$`;
+  }
+  return `${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}$`;
+}
+
+// ── 드래그앤드롭: 보유 종목 순서 관리 ─────────────────────────
+const HOLDINGS_ORDER_KEY = 'holdings_order';
+
+// localStorage에서 저장된 portfolio_id 순서 배열을 로드
+function loadOrder() {
+  try {
+    const raw = localStorage.getItem(HOLDINGS_ORDER_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// portfolio_id 배열을 localStorage에 저장
+function saveOrder(idList) {
+  try {
+    localStorage.setItem(HOLDINGS_ORDER_KEY, JSON.stringify(idList));
+  } catch {
+    // 저장 실패 시 무시
+  }
+}
+
+// 표시 순서: 저장된 id 순서대로 정렬, 새 종목은 끝에 추가, 사라진 id는 무시
+const orderedHoldings = computed(() => {
+  // orderVersion을 참조해 드롭 후 computed가 재평가되도록 의존성 등록
+  void orderVersion.value;
+  const items = props.holdings;
+  if (!items || items.length === 0) return [];
+  const savedOrder = loadOrder();
+  const idSet = new Set(items.map(h => h.portfolio_id));
+  // 저장 순서 중 실제로 존재하는 id만 남김
+  const validOrder = savedOrder.filter(id => idSet.has(id));
+  // 아직 순서에 없는 새 종목은 뒤에 추가
+  const orderedIds = validOrder.slice();
+  items.forEach(h => {
+    if (!orderedIds.includes(h.portfolio_id)) {
+      orderedIds.push(h.portfolio_id);
+    }
+  });
+  // id 순서대로 items를 정렬
+  const idxMap = new Map(orderedIds.map((id, i) => [id, i]));
+  return items.slice().sort((a, b) => {
+    const ia = idxMap.has(a.portfolio_id) ? idxMap.get(a.portfolio_id) : 9999;
+    const ib = idxMap.has(b.portfolio_id) ? idxMap.get(b.portfolio_id) : 9999;
+    return ia - ib;
+  });
+});
+
+// props.holdings가 바뀔 때 순서 배열을 현행화(없어진 id 제거, 새 id 추가)
+watch(
+  () => props.holdings,
+  (newHoldings) => {
+    if (!newHoldings || newHoldings.length === 0) return;
+    const savedOrder = loadOrder();
+    const idSet = new Set(newHoldings.map(h => h.portfolio_id));
+    const updated = savedOrder.filter(id => idSet.has(id));
+    newHoldings.forEach(h => {
+      if (!updated.includes(h.portfolio_id)) updated.push(h.portfolio_id);
+    });
+    saveOrder(updated);
+  },
+  { immediate: true }
+);
+
+// 드래그 상태
+const draggingId = ref(null);
+const dragOverId = ref(null);
+
+function onDragStart(event, portfolioId) {
+  draggingId.value = portfolioId;
+  // 투명도 전환 효과를 위해 DataTransfer에 id를 담아둠
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', String(portfolioId));
+}
+
+function onDragOver(event, portfolioId) {
+  if (portfolioId === draggingId.value) return;
+  dragOverId.value = portfolioId;
+}
+
+function onDragLeave() {
+  dragOverId.value = null;
+}
+
+function onDrop(event, targetId) {
+  if (!draggingId.value || draggingId.value === targetId) {
+    dragOverId.value = null;
+    return;
+  }
+  // 현재 순서 배열에서 dragging → target 위치로 이동
+  const currentOrder = orderedHoldings.value.map(h => h.portfolio_id);
+  const fromIdx = currentOrder.indexOf(draggingId.value);
+  const toIdx = currentOrder.indexOf(targetId);
+  if (fromIdx === -1 || toIdx === -1) {
+    dragOverId.value = null;
+    return;
+  }
+  const newOrder = currentOrder.slice();
+  const [moved] = newOrder.splice(fromIdx, 1);
+  newOrder.splice(toIdx, 0, moved);
+  saveOrder(newOrder);
+  // 강제 반응성 갱신을 위해 localStorage 변경 후 orderedHoldings computed가 재평가되도록
+  // Vue의 computed는 deps 기반이므로 props를 건드리지 않고도 localStorage를 트리거로 쓰려면
+  // 별도 반응형 키가 필요 → orderVersion으로 트리거
+  orderVersion.value++;
+  dragOverId.value = null;
+}
+
+function onDragEnd() {
+  _dragEndedAt = Date.now();
+  draggingId.value = null;
+  dragOverId.value = null;
+}
+
+// 드래그 후에 발생하는 spurious click 무시
+// HTML5 DnD: dragend 직후 click이 발생하는 브라우저 동작 대응
+let _dragEndedAt = 0;
+function onRowClick(item) {
+  // dragend로부터 200ms 이내의 click은 드래그 결과로 판단해 무시
+  if (Date.now() - _dragEndedAt < 200) return;
+  openChartModal(item);
+}
+
+// computed 재평가 트리거 (localStorage는 반응형이 아니므로 버전 카운터 사용)
+const orderVersion = ref(0);
 
 // ── computed ──────────────────────────────────────────────────
 const holdingFormMarket = computed(() => {
@@ -603,13 +1083,17 @@ function openHoldingModal(item = null) {
   editingHolding.value = item || null;
   formErrors.value = {};
   if (item) {
+    const isKR = item.market === 'KR';
+    // 수량은 정수, 원화(KR) 평단가도 정수로 고정. 그 외 후행 0 제거.
+    const qtyNum = Math.round(Number(item.quantity));
+    const avgNum = isKR ? Math.round(Number(item.average_price)) : Number(item.average_price);
     holdingForm.value = {
       symbol: item.symbol,
       market: item.market,
       stockName: item.name || '',
-      quantity: String(item.quantity),
-      average_price: String(item.average_price),
-      avg_fx_rate: item.avg_fx_rate ? String(item.avg_fx_rate) : '',
+      quantity: String(qtyNum),
+      average_price: String(avgNum),
+      avg_fx_rate: item.avg_fx_rate ? String(Number(item.avg_fx_rate)) : '',
     };
   } else {
     holdingForm.value = {
@@ -664,7 +1148,8 @@ function onHoldingSearchInput() {
     const apiResults = await fetchStockSearchApi(q, holdingSearchMode.value);
     holdingSearchResults.value = mergeSearchResults(
       localSearch(q, holdingSearchMode.value),
-      apiResults
+      apiResults,
+      q
     );
     showHoldingSearchDropdown.value = true;
   }, 300);
@@ -686,9 +1171,11 @@ function selectHoldingStock(stock) {
 async function submitHoldingForm() {
   formErrors.value = {};
 
-  const qty = parseFloat(holdingForm.value.quantity);
-  const avg = parseFloat(holdingForm.value.average_price);
   const market = holdingFormMarket.value;
+  // 수량은 정수, 원화(KR) 평단가도 정수로 고정.
+  const qty = Math.round(parseFloat(holdingForm.value.quantity));
+  const avgRaw = parseFloat(holdingForm.value.average_price);
+  const avg = market === 'KR' ? Math.round(avgRaw) : avgRaw;
   const fxRate = parseFloat(holdingForm.value.avg_fx_rate);
 
   if (!editingHolding.value && !holdingForm.value.symbol) {
@@ -696,7 +1183,7 @@ async function submitHoldingForm() {
     return;
   }
   if (isNaN(qty) || qty <= 0) {
-    formErrors.value.quantity = '수량은 0보다 커야 합니다';
+    formErrors.value.quantity = '수량은 1 이상의 정수여야 합니다';
     return;
   }
   if (isNaN(avg) || avg <= 0) {
@@ -806,16 +1293,40 @@ async function fetchStockSearchApi(q, mode) {
   }
 }
 
-function mergeSearchResults(localResults, apiResults) {
+function mergeSearchResults(localResults, apiResults, query) {
+  const q = String(query || '').trim();
+  const qLower = q.toLowerCase();
+  const hasHangulSyllable = /[가-힣]/.test(q);
+
   const seen = new Set(localResults.map(r => r.ticker));
-  const merged = [...localResults];
-  apiResults.forEach(item => {
-    if (!seen.has(item.ticker)) {
-      merged.push(item);
-      seen.add(item.ticker);
-    }
-  });
-  return merged.slice(0, 12);
+  let api = apiResults.filter(item => !seen.has(item.ticker));
+
+  // 한글(완성형) 검색어인데 종목명/티커에 실제로 들어있지 않은 API 느슨한 매칭 제거
+  if (hasHangulSyllable) {
+    api = api.filter(s =>
+      String(s.name || '').toLowerCase().includes(qLower) ||
+      String(s.ticker || '').toLowerCase().includes(qLower)
+    );
+  }
+
+  // 관련도 점수 정렬(정확일치 > 접두 > 부분 포함 > 그 외)
+  const scoreOf = (item) => {
+    const name = String(item.name || '').toLowerCase();
+    const ticker = String(item.ticker || '').toLowerCase();
+    if (ticker === qLower) return 100;
+    if (name === qLower) return 96;
+    if (ticker.startsWith(qLower)) return 92;
+    if (name.startsWith(qLower)) return 88;
+    if (name.includes(qLower)) return 72;
+    if (ticker.includes(qLower)) return 64;
+    return 40;
+  };
+
+  return [...localResults, ...api]
+    .map((item) => ({ item, s: scoreOf(item) }))
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.item)
+    .slice(0, 12);
 }
 
 // ── 드롭다운 외부 클릭 / ESC ──────────────────────────────────
@@ -926,12 +1437,84 @@ function sessionBadgeToLabel(badge) {
 
 // ── 로컬 유틸 ────────────────────────────────────────────────
 
+/**
+ * US 종목 총 손익 (현재가 — 연장 포함)
+ * = (current_price − average_price) × quantity
+ */
 function calcUSDProfit(item) {
   const cur = Number(item.current_price);
   const avg = Number(item.average_price);
   const qty = Number(item.quantity);
   if (isNaN(cur) || isNaN(avg) || isNaN(qty)) return null;
   return (cur - avg) * qty;
+}
+
+/**
+ * US 종목 미실현손익 (정규장 종가 기준)
+ * = (regular_close_price − average_price) × quantity
+ * regular_close_price 가 없으면 current_price 로 폴백 (정규장 중과 동일)
+ */
+function calcUSUnrealizedProfit(item) {
+  const regClose = item.regular_close_price != null
+    ? Number(item.regular_close_price)
+    : Number(item.current_price);
+  const avg = Number(item.average_price);
+  const qty = Number(item.quantity);
+  if (isNaN(regClose) || isNaN(avg) || isNaN(qty)) return null;
+  return (regClose - avg) * qty;
+}
+
+/**
+ * US 종목 미실현손익률 (정규장 종가 기준)
+ * = (regular_close_price − average_price) / average_price
+ */
+function calcUSUnrealizedProfitRate(item) {
+  const regClose = item.regular_close_price != null
+    ? Number(item.regular_close_price)
+    : Number(item.current_price);
+  const avg = Number(item.average_price);
+  if (isNaN(regClose) || isNaN(avg) || avg === 0) return null;
+  return (regClose - avg) / avg;
+}
+
+/**
+ * US 종목 장전(연장) 손익
+ * = (current_price − regular_close_price) × quantity
+ * regular_close_price 가 없으면 null 반환 (표시 안 함)
+ * 정규장 중(둘이 같거나 regular_close_price 없음)이면 0 또는 null
+ */
+function calcUSExtHoursProfit(item) {
+  if (item.regular_close_price == null) return null;
+  const cur      = Number(item.current_price);
+  const regClose = Number(item.regular_close_price);
+  const qty      = Number(item.quantity);
+  if (isNaN(cur) || isNaN(regClose) || isNaN(qty)) return null;
+  return (cur - regClose) * qty;
+}
+
+/**
+ * US 종목 총 손익률(애프터/주간 포함) = (current_price − average_price) / average_price
+ * 백엔드 profitRate 는 정규장 종가 기준이라, 총액 헤드라인과 일치시키려 현재가 기준으로 직접 계산.
+ */
+function calcUSDProfitRate(item) {
+  const cur = Number(item.current_price);
+  const avg = Number(item.average_price);
+  if (isNaN(cur) || isNaN(avg) || avg <= 0) return 0;
+  return (cur - avg) / avg;
+}
+
+/**
+ * US 종목 장전(연장) 손익률 = (current_price − regular_close_price) / average_price
+ * 평단을 분모로 써, 정규장 손익률 + 장전 손익률 = 총 손익률 로 깔끔히 합산된다.
+ * regular_close_price 가 없으면 null.
+ */
+function calcUSExtHoursProfitRate(item) {
+  if (item.regular_close_price == null) return null;
+  const cur      = Number(item.current_price);
+  const regClose = Number(item.regular_close_price);
+  const avg      = Number(item.average_price);
+  if (isNaN(cur) || isNaN(regClose) || isNaN(avg) || avg <= 0) return null;
+  return (cur - regClose) / avg;
 }
 
 // displayName: format.js 의 공용 함수에 SEARCHABLE_STOCKS 를 바인딩해 사용
@@ -961,6 +1544,7 @@ function sessionBadgeKo(badge) {
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick);
   document.addEventListener('keydown', handleKeyDown);
+  sessionTimer = setInterval(() => { sessionNow.value = new Date(); }, 30000);
 });
 
 onBeforeUnmount(() => {
@@ -969,6 +1553,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeyDown);
   if (holdingSearchDebounce) clearTimeout(holdingSearchDebounce);
   if (toastTimer) clearTimeout(toastTimer);
+  if (sessionTimer) clearInterval(sessionTimer);
 });
 </script>
 

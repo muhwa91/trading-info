@@ -2,12 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\MarketSessionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use GuzzleHttp\Client;
 
 class StockController extends Controller
 {
+    private MarketSessionService $sessionService;
+
+    public function __construct(MarketSessionService $sessionService)
+    {
+        $this->sessionService = $sessionService;
+    }
+
     private function getAccessToken($forceRefresh = false)
     {
         // 만료 토큰 감지 시 강제 갱신 — 캐시를 비워 새 토큰을 발급받는다.
@@ -118,8 +126,11 @@ class StockController extends Controller
 
         // 코스피 지수(KOSPI200) — KIS 국내업종 API 사용 (값 일관성)
         if ($ticker === 'KOSPI200') {
+            // 코스피 지수 캔들은 분봉도 KIS 분봉 집계로 구성 → 90초 캐싱. 현재가는 KIS 현재가 캐시(3초) 별도.
+            // TTL 90초로 늘려 WS 사이클 만료 빈도를 1/3로 감소.
+            $candleTtl = 90;
             $cacheKey = "kis_kospi_index_{$timeframe}";
-            $response = Cache::remember($cacheKey, 3, function () use ($timeframe) {
+            $response = Cache::remember($cacheKey, $candleTtl, function () use ($timeframe) {
                 return $this->getKospiIndexData($timeframe);
             });
 
@@ -134,27 +145,24 @@ class StockController extends Controller
         }
 
         if ($ticker === 'NQ=F' || $ticker === '^KS200' || $ticker === 'USDKRW=X') {
+            // 지수/환율 Yahoo 캔들: 90초 캐싱 — 봉 자체는 초 단위로 변하지 않음.
+            // 실시간성은 meta.regularMarketPrice 가 담당. TTL 90초로 늘려 WS 사이클 만료 빈도를 줄임.
             $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}";
-            $response = Cache::remember($cacheKey, 3, function () use ($ticker, $timeframe) {
+            $response = Cache::remember($cacheKey, 90, function () use ($ticker, $timeframe) {
                 return $this->getYahooChartData($ticker, $timeframe);
             });
             
             $content = json_decode($response->getContent(), true);
             if (is_array($content)) {
                 if ($ticker === 'NQ=F') {
-                    // 미국 거래일 판정: Yahoo currentTradingPeriod.regular.start NY날짜 기반
-                    $isUsTradingDay = $this->isUsMarketTradingToday();
-
-                    if (!$isUsTradingDay) {
-                        $content['session'] = '장마감';
-                    } else {
-                        $now = new \DateTime('now', new \DateTimeZone('Asia/Seoul'));
-                        $dayOfWeek = (int)$now->format('N');
-                        $hour = (int)$now->format('H');
-                        $isClosed = ($dayOfWeek === 6 && $hour >= 7) || ($dayOfWeek === 7) || ($dayOfWeek === 1 && $hour < 7);
-                        $content['session'] = $isClosed ? '장마감' : '거래중';
-                    }
-                    $content['is_trading_day'] = $isUsTradingDay;
+                    // 나스닥100 선물은 CME 에서 일~금 거의 24시간 거래 — 주식 거래일(현금장) 게이트를 쓰지 않는다.
+                    // KST 기준 휴장창: 토 06:00 ~ 월 07:00 (금 17:00 ET 마감 → 일 18:00 ET 재개)
+                    $now = new \DateTime('now', new \DateTimeZone('Asia/Seoul'));
+                    $dayOfWeek = (int)$now->format('N');
+                    $hour = (int)$now->format('H');
+                    $isClosed = ($dayOfWeek === 6 && $hour >= 6) || ($dayOfWeek === 7) || ($dayOfWeek === 1 && $hour < 7);
+                    $content['session'] = $isClosed ? '장마감' : '거래중';
+                    $content['is_trading_day'] = !$isClosed;
                 } elseif ($ticker === 'USDKRW=X') {
                     $content['session'] = '거래중';
                 } else {
@@ -166,8 +174,9 @@ class StockController extends Controller
         }
 
         if ($ticker === 'KOSPI_NIGHT') {
+            // 야간선물은 NQ=F 기반으로 합성 — NQ=F 캔들 캐싱(90초)에 맞춰 동일하게 90초 캐싱
             $cacheKey = "kospi_night_data_{$timeframe}";
-            $response = Cache::remember($cacheKey, 3, function () use ($timeframe) {
+            $response = Cache::remember($cacheKey, 90, function () use ($timeframe) {
                 return $this->getKOSPINightChartData($timeframe);
             });
             
@@ -183,15 +192,20 @@ class StockController extends Controller
             return $response;
         }
 
-        // If it's a Korean stock/ETF (ends with .KS or .KQ, or is purely numeric)
-        if (preg_match('/(\.KS|\.KQ)$/i', $ticker) || preg_match('/^\d+$/', $ticker)) {
+        // 국내 주식/ETF 판정: .KS/.KQ 접미사, 또는 KRX 단축코드(6자리 숫자 또는 신형 영숫자 예: 0167A0)
+        if (preg_match('/(\.KS|\.KQ)$/i', $ticker) || preg_match('/^\d{4}[0-9A-Z]{2}$/', $ticker) || preg_match('/^\d+$/', $ticker)) {
             $isDaily = ($timeframe === '1d');
+            // Yahoo 는 KRX 코드에 .KS/.KQ 접미사가 필요 — 없으면 .KS(코스피) 기본 부착
+            $yahooSymbol = preg_match('/(\.KS|\.KQ)$/i', $ticker) ? $ticker : ($ticker . '.KS');
+            // Yahoo 캔들(히스토리)은 90초 캐싱 — 봉 자체는 초 단위로 거의 변하지 않으며
+            // 실시간성은 KIS 현재가(3초 캐시)가 마지막 봉에 덧씌워 담당한다.
+            // TTL 90초로 늘려 WS 사이클 Yahoo 만료 빈도를 1/3로 감소.
             $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}_raw";
-            $dataResponse = Cache::remember($cacheKey, 3, function () use ($ticker, $timeframe, $isDaily) {
-                return $this->getYahooChartData($ticker, $timeframe, !$isDaily);
+            $dataResponse = Cache::remember($cacheKey, 90, function () use ($yahooSymbol, $timeframe, $isDaily) {
+                return $this->getYahooChartData($yahooSymbol, $timeframe, !$isDaily);
             });
 
-            // Fetch real-time price from KIS (cached for 3 seconds to avoid rate limits and ensure sync)
+            // KIS 현재가는 3초 캐싱 유지 — 실시간 가격·등락 갱신의 핵심이므로 짧게 유지
             $cacheKeyKis = "kis_realtime_price_{$ticker}";
             $kisPrice = Cache::remember($cacheKeyKis, 3, function() use ($ticker) {
                 return $this->fetchDomesticPriceFromKis($ticker);
@@ -270,13 +284,16 @@ class StockController extends Controller
 
         // US Stock flow (non-index, non-domestic)
         $isDaily = ($timeframe === '1d');
+        // Yahoo 캔들(히스토리): 90초 캐싱 — 봉은 초 단위로 거의 변하지 않음
+        // 실시간성은 KIS 현재가(3초 캐시)가 마지막 봉에 덧씌워 담당.
+        // TTL 90초로 늘려 WS 사이클 Yahoo 만료 빈도를 1/3로 감소.
         $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}_raw";
-        
-        $dataResponse = Cache::remember($cacheKey, 3, function () use ($ticker, $timeframe, $isDaily) {
+
+        $dataResponse = Cache::remember($cacheKey, 90, function () use ($ticker, $timeframe, $isDaily) {
             return $this->getYahooChartData($ticker, $timeframe, !$isDaily);
         });
 
-        // Fetch real-time US price from KIS
+        // KIS 현재가는 3초 캐싱 유지 — 실시간 가격·등락 갱신의 핵심
         $cacheKeyKis = "kis_realtime_price_us_{$ticker}";
         $kisPrice = Cache::remember($cacheKeyKis, 3, function() use ($ticker) {
             return $this->fetchOverseasPriceFromKis($ticker);
@@ -344,11 +361,11 @@ class StockController extends Controller
                     }
                 }
             }
-            // 미국 거래일 판정: Yahoo currentTradingPeriod.regular.start NY날짜 기반 (공휴일 포함)
-            $usTradingDay = $this->isUsMarketTradingToday();
-            $content['session'] = $usTradingDay ? $session : '장마감';
+            // 세션 라벨은 getUsMarketSessionInfo 가 주말·공휴일·주간거래(20:00~04:00 ET)를 모두 판정한다.
+            // 주간거래는 다음 거래일로 이어지는 세션이라 'NY 오늘=거래일'로 막으면 안 된다(과거 휴장 오판 버그).
+            $content['session'] = $session;
             $content['source'] = 'Yahoo + KIS (Daytime)';
-            $content['is_trading_day'] = $usTradingDay;
+            $content['is_trading_day'] = ($session !== '장마감');
             return response()->json($content);
         }
 
@@ -635,6 +652,13 @@ class StockController extends Controller
         ]);
     }
 
+    /**
+     * 미국 주식 분봉 데이터를 KIS API 로 조회한다.
+     *
+     * 주간거래(Blue Ocean ATS, 20:00~04:00 ET) 시간대에는 정규장 EXCD(NAS/NYS/AMS)가
+     * 정규장 당일 봉만 반환하므로, 주간거래 전용 코드를 먼저 시도한다:
+     *   - BAQ : Nasdaq Blue Ocean / BAY : NYSE Blue Ocean / BAA : AMEX Blue Ocean
+     */
     private function fetchMinuteFromKis($ticker, $timeframe)
     {
         $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
@@ -649,9 +673,30 @@ class StockController extends Controller
         elseif ($timeframe === '30m') $nmin = '30';
         elseif ($timeframe === '1h') $nmin = '60';
 
-        $exchanges = ['NAS', 'NYS', 'AMS'];
-        $output2 = null;
+        // 주간거래 시간대에는 Blue Ocean 코드 우선 시도
+        $session = $this->getUsMarketSessionInfo(time());
+        $sessionGroup = ($session === '주간거래') ? 'overnight' : 'regular';
 
+        if ($session === '주간거래') {
+            $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
+        } else {
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        }
+
+        // 분봉용 EXCD 캐시 — 현재가와 동일한 종목별·세션그룹별 캐시를 재사용
+        // (분봉/일봉은 같은 거래소에 상장돼 있으므로 동일 키 공유)
+        $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
+        $cachedExcd = Cache::get($excdCacheKey);
+        if ($cachedExcd !== null) {
+            $exchanges = array_merge(
+                [$cachedExcd],
+                array_values(array_filter($allExchanges, fn($e) => $e !== $cachedExcd))
+            );
+        } else {
+            $exchanges = $allExchanges;
+        }
+
+        $output2 = null;
         $client = new Client();
         $trId = (strpos($apiUrl, 'openapivts') !== false) ? 'VHDFS76950200' : 'HHDFS76950200';
 
@@ -679,9 +724,13 @@ class StockController extends Controller
                 ]);
 
                 $data = json_decode($response->getBody()->getContents(), true);
-                
+
                 if (isset($data['output2']) && is_array($data['output2']) && count($data['output2']) > 0 && (float)$data['output2'][0]['last'] > 0) {
                     $output2 = $data['output2'];
+                    // 성공한 EXCD 캐싱 — fetchOverseasPriceFromKis 와 같은 키를 공유해 중복 탐색 방지
+                    if ($cachedExcd !== $exchange) {
+                        Cache::put($excdCacheKey, $exchange, 86400);
+                    }
                     break;
                 }
             } catch (\Exception $ex) {
@@ -690,7 +739,7 @@ class StockController extends Controller
         }
 
         if (empty($output2)) {
-            throw new \Exception("No minute price data found for ticker {$ticker} on NAS, NYS, or AMS.");
+            throw new \Exception("No minute price data found for ticker {$ticker} on NAS, NYS, AMS, BAQ, BAY, or BAA.");
         }
 
         $candles = [];
@@ -1379,6 +1428,8 @@ class StockController extends Controller
         }
 
         $cleanTicker = strtoupper($ticker);
+
+        // 국내 종목: krx_stocks.json 에서 한글명 조회
         if (preg_match('/(\.KS|\.KQ)$/', $cleanTicker) || preg_match('/^\d{6}$/', $cleanTicker)) {
             $code = preg_replace('/(\.KS|\.KQ)$/', '', $cleanTicker);
             $filePath = storage_path('app/krx_stocks.json');
@@ -1392,6 +1443,28 @@ class StockController extends Controller
                     }
                 }
             }
+        }
+
+        // 미국 종목: us_stocks.json 에서 한글명 조회 (정적 캐시로 파일 중복 로드 방지)
+        static $usStocksMap = null;
+        if ($usStocksMap === null) {
+            $usPath = storage_path('app/us_stocks.json');
+            if (file_exists($usPath)) {
+                $raw = json_decode(file_get_contents($usPath), true);
+                $usStocksMap = [];
+                if (is_array($raw)) {
+                    foreach ($raw as $s) {
+                        $usStocksMap[$s['symbol']] = $s;
+                    }
+                }
+            } else {
+                $usStocksMap = [];
+            }
+        }
+        if (isset($usStocksMap[$cleanTicker])) {
+            $s = $usStocksMap[$cleanTicker];
+            // 한글명이 영문명과 다를 때만 한글명을 반환 (같으면 영문명만)
+            return ($s['koName'] !== $s['enName']) ? $s['koName'] : $s['enName'];
         }
 
         return $ticker . ' Inc.';
@@ -1481,49 +1554,110 @@ class StockController extends Controller
             return response()->json($merged);
         }
 
-        // 2. 미국 주식의 경우: 야후 파이낸스 API 활용 (영어 쿼리)
-        try {
-            $client = new Client();
-            $url = "https://query1.finance.yahoo.com/v1/finance/search?q=" . urlencode($query) . "&quotesCount=20&newsCount=0";
-            $response = $client->get($url, [
-                'headers' => [
-                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                ]
-            ]);
+        // 2. 미국 주식: us_stocks.json(KIS 마스터) 우선 → Yahoo Finance 폴백(보완)
+        //    - 한글/영문/티커 부분일치 검색
+        //    - 한글 검색어면 us_stocks.json 매칭이 우선 노출
+        //    - Yahoo 는 마스터에 없는 종목 보완용
 
-            $data = json_decode($response->getBody()->getContents(), true);
-            $quotes = $data['quotes'] ?? [];
+        $queryUpper  = strtoupper($query);
+        $queryLower  = strtolower($query);
+        // 한글 포함 여부 판정 (U+AC00~U+D7A3 범위)
+        $isKoreanQuery = (bool) preg_match('/[\x{AC00}-\x{D7A3}]/u', $query);
 
-            $results = [];
-            foreach ($quotes as $quote) {
-                $quoteType = $quote['quoteType'] ?? '';
-                if ($quoteType !== 'EQUITY' && $quoteType !== 'ETF') {
-                    continue;
+        // 2-a. us_stocks.json (KIS 마스터) 검색
+        $masterResults = [];
+        $seenSymbols   = [];   // Yahoo 결과와 중복 제거용
+
+        $usStocksPath = storage_path('app/us_stocks.json');
+        if (file_exists($usStocksPath)) {
+            $usStocks = json_decode(file_get_contents($usStocksPath), true);
+            if (is_array($usStocks)) {
+                foreach ($usStocks as $stock) {
+                    $symbol  = $stock['symbol'] ?? '';
+                    $koName  = $stock['koName'] ?? '';
+                    $enName  = $stock['enName'] ?? '';
+                    $excd    = $stock['exchange'] ?? '';
+
+                    $koLower = mb_strtolower($koName, 'UTF-8');
+                    $enLower = strtolower($enName);
+
+                    $match = (stripos($symbol, $queryUpper) !== false)
+                        || (mb_strpos($koLower, $queryLower, 0, 'UTF-8') !== false)
+                        || (strpos($enLower, $queryLower) !== false);
+
+                    if ($match) {
+                        // 한글명이 있으면 한글명 우선, 없으면 영문명
+                        $displayName = ($koName !== '' && $koName !== $enName) ? "{$koName} ({$enName})" : $enName;
+
+                        $masterResults[] = [
+                            'ticker'   => $symbol,
+                            'name'     => $displayName,
+                            'isKorean' => false,
+                            'exchange' => $excd,
+                        ];
+                        $seenSymbols[$symbol] = true;
+                    }
+
+                    if (count($masterResults) >= 20) {
+                        break;
+                    }
                 }
-
-                $symbol = $quote['symbol'] ?? '';
-                $name = $quote['longname'] ?? $quote['shortname'] ?? $symbol;
-                $exchange = $quote['exchange'] ?? '';
-
-                $isKorean = preg_match('/(\.KS|\.KQ)$/i', $symbol) || preg_match('/^\d{6}$/', $symbol);
-
-                if ($type === 'us' && $isKorean) {
-                    continue;
-                }
-
-                $results[] = [
-                    'ticker' => $symbol,
-                    'name' => $name,
-                    'isKorean' => $isKorean,
-                    'exchange' => $exchange
-                ];
             }
-
-            return response()->json($results);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Stock search error: " . $e->getMessage());
-            return response()->json([]);
         }
+
+        // 2-b. Yahoo Finance 폴백 — 한글 검색어면 스킵(Yahoo 는 한글 검색 불가),
+        //      영문/티커 검색이고 마스터 결과가 부족할 때만 보완
+        $yahooResults = [];
+        if (! $isKoreanQuery) {
+            try {
+                $client = new Client();
+                $url = "https://query1.finance.yahoo.com/v1/finance/search?q=" . urlencode($query) . "&quotesCount=20&newsCount=0";
+                $response = $client->get($url, [
+                    'headers' => [
+                        'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    ],
+                    'timeout' => 5,
+                ]);
+
+                $data   = json_decode($response->getBody()->getContents(), true);
+                $quotes = $data['quotes'] ?? [];
+
+                foreach ($quotes as $quote) {
+                    $quoteType = $quote['quoteType'] ?? '';
+                    if ($quoteType !== 'EQUITY' && $quoteType !== 'ETF') {
+                        continue;
+                    }
+
+                    $symbol    = $quote['symbol'] ?? '';
+                    $name      = $quote['longname'] ?? $quote['shortname'] ?? $symbol;
+                    $exchange  = $quote['exchange'] ?? '';
+                    $isDomestic = preg_match('/(\.KS|\.KQ)$/i', $symbol) || preg_match('/^\d{6}$/', $symbol);
+
+                    // type='us' 면 국내 종목 제외
+                    if ($type === 'us' && $isDomestic) {
+                        continue;
+                    }
+
+                    // us_stocks.json 에서 이미 찾은 심볼은 중복 제거
+                    if (isset($seenSymbols[$symbol])) {
+                        continue;
+                    }
+
+                    $yahooResults[] = [
+                        'ticker'   => $symbol,
+                        'name'     => $name,
+                        'isKorean' => (bool) $isDomestic,
+                        'exchange' => $exchange,
+                    ];
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning('[searchStocks] Yahoo 검색 오류(폴백 스킵): ' . $e->getMessage());
+            }
+        }
+
+        // 한글 검색어면 마스터 결과 단독, 영문이면 마스터 우선 + Yahoo 보완
+        $merged = array_slice(array_merge($masterResults, $yahooResults), 0, 20);
+        return response()->json($merged);
     }
 
     private function getChosung($str)
@@ -1593,101 +1727,12 @@ class StockController extends Controller
     }
 
     /**
-     * 해당 시각이 KRX 개장일(거래일)인지 KIS 국내휴장일조회 API(CTCA0903R)로 판정.
-     * 공휴일·임시휴장을 하드코딩 없이 KIS API 로 판단한다.
-     * 날짜 단위로 캐싱하며, API 가 한 번에 여러 날짜를 돌려주므로 함께 캐싱한다.
-     * API 실패 시에만 평일 여부로 폴백(휴일 하드코딩 아님).
+     * 해당 시각이 KRX 개장일(거래일)인지 판정한다.
+     * MarketSessionService 에 위임.
      */
     private function isKrTradingDay($timestamp)
     {
-        $dt = new \DateTime("@{$timestamp}");
-        $dt->setTimezone(new \DateTimeZone('Asia/Seoul'));
-        $dateStr = $dt->format('Ymd');
-        $cacheKey = "kis_trading_day_{$dateStr}";
-
-        $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
-            return $cached;
-        }
-
-        // KIS 국내휴장일조회 — BASS_DT 부터의 영업일/개장일 정보를 한꺼번에 받아 캐싱
-        $opened = $this->fetchKisOpenedDays($dateStr);
-        if (!empty($opened)) {
-            foreach ($opened as $d => $isOpen) {
-                Cache::put("kis_trading_day_{$d}", $isOpen, 60 * 60 * 24 * 7); // 7일 캐싱
-            }
-            if (array_key_exists($dateStr, $opened)) {
-                return $opened[$dateStr];
-            }
-        }
-
-        // 폴백: API 가 응답하지 않을 때만 평일 여부 사용 (짧게 캐싱해 API 회복 시 갱신)
-        $isWeekday = ((int)$dt->format('N')) <= 5;
-        Cache::put($cacheKey, $isWeekday, 60 * 30);
-        return $isWeekday;
-    }
-
-    /**
-     * KIS 국내휴장일조회(CTCA0903R) 호출 → [Ymd => 개장여부(bool)] 맵 반환.
-     * opnd_yn(개장일여부) 'Y' 면 거래일.
-     */
-    private function fetchKisOpenedDays($baseDateStr)
-    {
-        $apiUrl = env('KIS_API_URL', 'https://openapi.koreainvestment.com:9443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-
-        if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-            return [];
-        }
-
-        try {
-            $client = new Client();
-
-            $doRequest = function ($token) use ($client, $apiUrl, $appKey, $appSecret, $baseDateStr) {
-                return $client->get("{$apiUrl}/uapi/domestic-stock/v1/quotations/chk-holiday", [
-                    'headers' => [
-                        'content-type' => 'application/json',
-                        'authorization' => "Bearer {$token}",
-                        'appkey' => $appKey,
-                        'appsecret' => $appSecret,
-                        'tr_id' => 'CTCA0903R',
-                        'custtype' => 'P',
-                    ],
-                    'query' => [
-                        'BASS_DT' => $baseDateStr,
-                        'CTX_AREA_NK' => '',
-                        'CTX_AREA_FK' => '',
-                    ],
-                    'http_errors' => false,
-                ]);
-            };
-
-            $accessToken = $this->getAccessToken();
-            $response = $doRequest($accessToken);
-            $data = json_decode($response->getBody()->getContents(), true);
-
-            // 토큰 만료(EGW00123) 시 강제 갱신 후 1회 재시도 — 휴장 감지가 폴백으로 새지 않게
-            if (isset($data['msg_cd']) && $data['msg_cd'] === 'EGW00123') {
-                $accessToken = $this->getAccessToken(true);
-                $response = $doRequest($accessToken);
-                $data = json_decode($response->getBody()->getContents(), true);
-            }
-
-            $map = [];
-            if (isset($data['output']) && is_array($data['output'])) {
-                foreach ($data['output'] as $row) {
-                    if (isset($row['bass_dt'])) {
-                        // opnd_yn: 개장일여부(증시 개장). bzdy_yn(영업일)·tr_day_yn(거래일)도 있으나 개장 기준 사용.
-                        $map[$row['bass_dt']] = (($row['opnd_yn'] ?? 'N') === 'Y');
-                    }
-                }
-            }
-            return $map;
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("KIS 휴장일 조회 실패: " . $e->getMessage());
-            return [];
-        }
+        return $this->sessionService->isKrTradingDay((int)$timestamp);
     }
 
     private function isKrxMarketOpen($timestamp)
@@ -1795,115 +1840,21 @@ class StockController extends Controller
     }
 
     /**
-     * Yahoo Finance 의 currentTradingPeriod.regular.start(unix) 의 NY 날짜를 기준으로
-     * 오늘이 미국 주식 거래일인지 판정한다.
-     *
-     * - 거래일이면 start 가 오늘(NY) 09:30 을 가리킨다.
-     * - 휴장(공휴일·주말)이면 start 가 마지막 거래일(과거)을 가리킨다.
-     *
-     * 결과는 날짜 단위(오늘 자정까지)로 캐싱해, 모든 미국 종목 요청이 공유한다.
-     * API 실패 시 폴백: 주말 여부(평일=거래일 가정)로 판정 — 하드코딩 공휴일 없음.
+     * Yahoo Finance SPY meta 로 오늘(NY)이 미국 거래일인지 판정한다.
+     * MarketSessionService 에 위임.
      */
     private function isUsMarketTradingToday(): bool
     {
-        $nyTz = new \DateTimeZone('America/New_York');
-        $todayNy = (new \DateTime('now', $nyTz))->format('Y-m-d');
-        $cacheKey = "us_trading_day_{$todayNy}";
-
-        $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
-            return (bool)$cached;
-        }
-
-        try {
-            $client = new \GuzzleHttp\Client();
-            // SPY 는 NYSE Arca 상장 ETF 로 미국 시장 개폐와 동일 — 가벼운 1d/1d 요청으로 meta 만 취득
-            $url = 'https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1d&range=1d';
-            $response = $client->get($url, [
-                'headers' => ['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
-                'timeout' => 5,
-            ]);
-            $data = json_decode($response->getBody()->getContents(), true);
-
-            $regularStart = $data['chart']['result'][0]['meta']['currentTradingPeriod']['regular']['start'] ?? null;
-            if ($regularStart !== null) {
-                $startDt = new \DateTime("@{$regularStart}");
-                $startDt->setTimezone($nyTz);
-                $startNyDate = $startDt->format('Y-m-d');
-
-                $isTradingDay = ($startNyDate === $todayNy);
-
-                // 결과를 오늘 자정(NY)까지 캐싱 — 거래일/휴장 결과가 날짜 넘어가면 무효
-                $midnight = new \DateTime('tomorrow', $nyTz);
-                $ttl = $midnight->getTimestamp() - time();
-                Cache::put($cacheKey, $isTradingDay, max($ttl, 300));
-
-                return $isTradingDay;
-            }
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::warning("isUsMarketTradingToday: Yahoo fetch 실패, 주말 폴백 사용: " . $e->getMessage());
-        }
-
-        // 폴백: API 응답 없을 때만 주말 여부로 판정 (공휴일은 식별 불가 — 짧게 캐싱)
-        $nyDow = (int)(new \DateTime('now', $nyTz))->format('N');
-        $isWeekday = ($nyDow <= 5);
-        Cache::put($cacheKey, $isWeekday, 300); // 5분 후 재시도 가능하도록 짧게 캐싱
-        return $isWeekday;
+        return $this->sessionService->isUsMarketTradingToday();
     }
 
     private function getUsMarketSessionInfo($timestamp)
     {
-        // 미국 휴장일(공휴일·주말)이면 즉시 장마감 반환
-        if (!$this->isUsMarketTradingToday()) {
-            return '장마감';
-        }
-
-        $dt = new \DateTime("@{$timestamp}");
-        $dt->setTimezone(new \DateTimeZone('America/New_York'));
-
-        $dayOfWeek = (int)$dt->format('N'); // 1 = Mon, ..., 7 = Sun
-        $hour = (int)$dt->format('H');
-        $minute = (int)$dt->format('i');
-        $timeVal = $hour * 100 + $minute;
-
-        // Weekend check in New York time:
-        // Friday after 20:00 (8:00 PM EST) to Sunday before 20:00 (8:00 PM EST) is Closed.
-        $isClosed = false;
-        if ($dayOfWeek === 6) { // Saturday
-            $isClosed = true;
-        } elseif ($dayOfWeek === 7 && $timeVal < 2000) { // Sunday before 8 PM EST
-            $isClosed = true;
-        } elseif ($dayOfWeek === 5 && $timeVal >= 2000) { // Friday after 8 PM EST
-            $isClosed = true;
-        }
-
-        if ($isClosed) {
-            return '장마감';
-        }
-        
-        // Pre-market: 04:00 to 09:30
-        // Regular Market: 09:30 to 16:00
-        // Post-market (애프터마켓): 16:00 to 20:00
-        // Daytime Trading (주간거래): 20:00 to 04:00 (next day)
-        
-        if ($timeVal >= 400 && $timeVal < 930) {
-            return '프리마켓';
-        } elseif ($timeVal >= 930 && $timeVal < 1600) {
-            return '정규장';
-        } elseif ($timeVal >= 1600 && $timeVal < 2000) {
-            return '애프터마켓';
-        } else {
-            return '주간거래';
-        }
+        return $this->sessionService->getUsSession((int)$timestamp);
     }
 
     private function isUsMarketOpen($timestamp)
     {
-        // 미국 휴장일(공휴일·주말)이면 시장 미개장
-        if (!$this->isUsMarketTradingToday()) {
-            return false;
-        }
-
         $dt = new \DateTime("@{$timestamp}");
         $dt->setTimezone(new \DateTimeZone('America/New_York'));
 
@@ -1912,56 +1863,89 @@ class StockController extends Controller
         $minute = (int)$dt->format('i');
         $timeVal = $hour * 100 + $minute;
 
-        // Weekend check in New York time:
-        // Friday after 20:00 (8 PM EST) to Sunday before 20:00 (8 PM EST) is Closed.
+        // 주말 휴장 경계(NY): 금 20:00 ~ 일 20:00
         if ($dayOfWeek === 6) { // Saturday
             return false;
         }
-        if ($dayOfWeek === 7) { // Sunday
-            return ($timeVal >= 2000); // Open at 8 PM EST for Daytime trading
+        if ($dayOfWeek === 7 && $timeVal < 2000) { // Sunday before 8 PM EST
+            return false;
         }
-        if ($dayOfWeek === 5) { // Friday
-            return ($timeVal < 2000); // Close at 8 PM EST
+        if ($dayOfWeek === 5 && $timeVal >= 2000) { // Friday after 8 PM EST
+            return false;
         }
 
-        return true;
+        // 주간거래(20:00~04:00)는 다음 거래일로 이어지는 세션 — 주말만 아니면 개장
+        if ($timeVal >= 2000 || $timeVal < 400) {
+            return true;
+        }
+
+        // 데이 세션(04:00~20:00)은 'NY 오늘'이 거래일일 때만 — 공휴일이면 미개장
+        return $this->isUsMarketTradingToday();
     }
 
     private function getKrMarketSessionInfo($timestamp)
     {
-        // 공휴일·주말 등 비개장일이면 장마감 (KIS API 기준)
-        if (!$this->isKrTradingDay($timestamp)) {
-            return '장마감';
-        }
-
-        $dt = new \DateTime("@{$timestamp}");
-        $dt->setTimezone(new \DateTimeZone('Asia/Seoul'));
-
-        $timeVal = (int)$dt->format('Hi');
-        if ($timeVal >= 900 && $timeVal <= 1530) {
-            return '정규장';
-        }
-
-        return '장마감';
+        return $this->sessionService->getKrSession((int)$timestamp);
     }
 
+    /**
+     * 미국 주식 현재가를 KIS API 로 조회한다.
+     *
+     * 주간거래(Blue Ocean ATS, 20:00~04:00 ET) 시간대에는 정규장 EXCD(NAS/NYS/AMS)가
+     * 전일 종가(고정값)를 반환하므로, 주간거래 전용 코드를 먼저 시도한다:
+     *   - BAQ : Nasdaq Blue Ocean (나스닥 상장 주간거래)
+     *   - BAY : NYSE Blue Ocean   (뉴욕거래소 상장 주간거래)
+     *   - BAA : AMEX Blue Ocean   (아멕스 상장 주간거래)
+     * 주간거래 코드로 값을 얻지 못하면 정규장 코드(NAS/NYS/AMS)로 폴백한다.
+     * 정규장/프리/애프터 시간대에는 정규장 코드를 우선 사용한다.
+     *
+     * [성능 최적화] EXCD 프로빙 결과 캐시:
+     *   처음 한 번 어느 거래소에서 성공했는지를 "세션 그룹 + 종목" 단위로 캐싱한다.
+     *   캐시 히트 시 해당 거래소에 바로 1회만 호출 → 최대 6회 → 1~2회로 단축.
+     *   세션 그룹: 정규/프리/애프터 = "regular", 주간거래 = "overnight"
+     *   (주간거래 세션이 전환되면 EXCD 도 달라져야 하므로 그룹별 분리)
+     *   캐시 TTL: 하루 (주간→정규 전환 시 폴백이 자동으로 재탐색 후 재캐싱)
+     */
     private function fetchOverseasPriceFromKis($ticker)
     {
         $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
         $appKey = env('KIS_APP_KEY');
         $appSecret = env('KIS_APP_SECRET');
-        
+
         if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
             return null;
         }
-        
+
         $lastSuccessKey = "kis_last_successful_overseas_price_{$ticker}";
-        $exchanges = ['NAS', 'NYS', 'AMS'];
-        
+
+        // 세션 판정 후 시도 순서 결정 — 주간거래/정규장별 EXCD 우선순위가 다르다
+        $session = $this->getUsMarketSessionInfo(time());
+        $sessionGroup = ($session === '주간거래') ? 'overnight' : 'regular';
+
+        if ($session === '주간거래') {
+            $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
+        } else {
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        }
+
+        // 종목별·세션그룹별로 이전에 성공한 EXCD 캐시 조회
+        // → 히트 시 해당 거래소를 맨 앞으로 배치해 1~2회 만에 조회 완료
+        $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
+        $cachedExcd = Cache::get($excdCacheKey);
+        if ($cachedExcd !== null) {
+            // 성공 거래소를 맨 앞에 두되, 나머지 폴백도 그대로 유지
+            $exchanges = array_merge(
+                [$cachedExcd],
+                array_values(array_filter($allExchanges, fn($e) => $e !== $cachedExcd))
+            );
+        } else {
+            $exchanges = $allExchanges;
+        }
+
         try {
             $accessToken = $this->getAccessToken();
             $client = new Client();
-            
+
             foreach ($exchanges as $exchange) {
                 try {
                     $response = $client->get("{$apiUrl}/uapi/overseas-price/v1/quotations/price", [
@@ -1978,7 +1962,7 @@ class StockController extends Controller
                             'SYMB' => $ticker,
                         ]
                     ]);
-                    
+
                     $data = json_decode($response->getBody()->getContents(), true);
                     if (isset($data['output']['last']) && (float)$data['output']['last'] > 0) {
                         $output = $data['output'];
@@ -1986,9 +1970,10 @@ class StockController extends Controller
                             'price' => (float)$output['last'],
                             'change_amount' => (float)$output['diff'],
                             'change_percent' => (float)$output['rate'],
-                            'sign' => $output['sign'] ?? '3'
+                            'sign' => $output['sign'] ?? '3',
+                            'excd' => $exchange, // 디버깅·로그용
                         ];
-                        
+
                         if ($result['sign'] === '4' || $result['sign'] === '5') {
                             $result['change_amount'] = -abs($result['change_amount']);
                             $result['change_percent'] = -abs($result['change_percent']);
@@ -1996,7 +1981,11 @@ class StockController extends Controller
                             $result['change_amount'] = abs($result['change_amount']);
                             $result['change_percent'] = abs($result['change_percent']);
                         }
-                        
+
+                        // 성공한 EXCD 를 세션 그룹별로 캐싱 — 다음 사이클부터 즉시 1회 적중
+                        if ($cachedExcd !== $exchange) {
+                            Cache::put($excdCacheKey, $exchange, 86400); // 24시간
+                        }
                         Cache::put($lastSuccessKey, $result, 86400); // 24 hours
                         return $result;
                     }
@@ -2007,12 +1996,12 @@ class StockController extends Controller
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Failed to fetch overseas price from KIS: " . $e->getMessage());
         }
-        
+
         $fallback = Cache::get($lastSuccessKey);
         if ($fallback) {
             return $fallback;
         }
-        
+
         return null;
     }
 
@@ -2020,17 +2009,22 @@ class StockController extends Controller
     {
         $cacheKey = "kis_accumulated_us_1m_{$ticker}";
         $accumulated = Cache::get($cacheKey, []);
-        
+
         $now = time();
         if (!$this->isUsMarketOpen($now)) {
             return $accumulated;
         }
-        
+
         $currentPeriodTime = $now - ($now % 60);
         $alignedLastYahooTime = $lastYahooTime - ($lastYahooTime % 60);
-        
+
         if (empty($accumulated) && $lastYahooTime > 0) {
-            $tempTime = $alignedLastYahooTime + 60;
+            // bootstrap: Yahoo 마지막 봉 이후부터 지금까지 빈 분봉을 채운다.
+            // 주간거래 시작 시 Yahoo 마지막 봉이 수 시간~수일 전일 수 있어
+            // 최대 24시간 이내 구간만 채워 루프가 과도하게 길어지는 것을 방지한다.
+            $bootstrapStart = max($alignedLastYahooTime + 60, $now - 86400);
+            $bootstrapStart = $bootstrapStart - ($bootstrapStart % 60);
+            $tempTime = $bootstrapStart;
             $lastClose = $price;
             while ($tempTime <= $currentPeriodTime) {
                 if ($this->isUsMarketOpen($tempTime)) {

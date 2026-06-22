@@ -4,9 +4,9 @@
  * PortfolioSummaryBar.vue, HoldingsPanel.vue 에서 글자 단위로 동일하게
  * 중복되던 함수를 한 곳으로 모은 것. 순수 함수만 포함.
  *
- * 색상 규칙:
- *   KR 상승 → rose-400  | KR 하락 → sky-400
- *   US 상승 → emerald-400 | US 하락 → rose-400
+ * 색상 규칙 (국내·미국 구분 없이 통일):
+ *   상승(증가) → rose-400  (#f43f5e)
+ *   하락(감소) → sky-400   (#38bdf8)
  */
 
 // ── 금액 포맷 ──────────────────────────────────────────────────────
@@ -32,14 +32,14 @@ export function formatProfitWon(value) {
 }
 
 /**
- * 달러 손익을 "+$1.23" / "-$1.23" 형태로.
+ * 달러 손익을 "+1.23$" / "-1.23$" 형태로 (원화처럼 기호를 뒤에).
  * null/undefined → '—'
  */
 export function formatProfitUSD(value) {
   if (value === null || value === undefined) return '—';
   const n = Number(value);
   const sign = n >= 0 ? '+' : '-';
-  return `${sign}$${Math.abs(n).toFixed(2)}`;
+  return `${sign}${Math.abs(n).toFixed(2)}$`;
 }
 
 /**
@@ -67,7 +67,7 @@ export function formatQuantity(value) {
 /**
  * currency 에 따라 현재가·평단가를 포맷.
  *   currency === 'KRW' → "1,234,567원"
- *   그 외              → "$1.23"
+ *   그 외              → "1.23$" (기호를 뒤에)
  * null/undefined → '—'
  */
 export function formatPrice(currency, value) {
@@ -75,7 +75,7 @@ export function formatPrice(currency, value) {
   if (currency === 'KRW') {
     return `${Math.round(Number(value)).toLocaleString()}원`;
   }
-  return `$${Number(value).toFixed(2)}`;
+  return `${Number(value).toFixed(2)}$`;
 }
 
 // ── 시각 포맷 ──────────────────────────────────────────────────────
@@ -99,33 +99,29 @@ export function formatRecordedAt(val) {
 // ── 색상 헬퍼 ──────────────────────────────────────────────────────
 
 /**
- * 손익값과 시장 구분에 따른 텍스트 색 클래스 반환.
+ * 손익값에 따른 텍스트 색 클래스 반환.
+ * 국내·미국 구분 없이 상승=빨강(rose-400), 하락=파랑(sky-400)으로 통일.
  * @param {number|null} value  손익 금액(양수=이익, 음수=손실)
- * @param {'kr'|'us'}  market  소문자
+ * @param {'kr'|'us'}  market  호환을 위해 시그니처 유지 (무시됨)
  * @returns {string} Tailwind 색상 클래스
  */
 export function profitColorClass(value, market) {
   const n = Number(value);
   if (isNaN(n)) return 'text-base-content/60';
-  if (market === 'kr') {
-    return n >= 0 ? 'text-rose-400' : 'text-sky-400';
-  }
-  return n >= 0 ? 'text-emerald-400' : 'text-rose-400';
+  return n >= 0 ? 'text-rose-400' : 'text-sky-400';
 }
 
 /**
- * 손익값과 시장 구분에 따른 배지 배경+텍스트 클래스 반환.
+ * 손익값에 따른 배지 배경+텍스트 클래스 반환.
+ * 국내·미국 구분 없이 상승=badge-kr-up(빨강), 하락=badge-kr-down(파랑)으로 통일.
  * @param {number|null} value  손익 금액
- * @param {'kr'|'us'}  market  소문자
+ * @param {'kr'|'us'}  market  호환을 위해 시그니처 유지 (무시됨)
  * @returns {string} Tailwind / 커스텀 클래스
  */
 export function profitBadgeClass(value, market) {
   const n = Number(value);
   if (isNaN(n)) return 'text-base-content/30 bg-base-200/40';
-  if (market === 'kr') {
-    return n >= 0 ? 'badge-kr-up' : 'badge-kr-down';
-  }
-  return n >= 0 ? 'badge-us-up' : 'badge-us-down';
+  return n >= 0 ? 'badge-kr-up' : 'badge-kr-down';
 }
 
 // ── displayName 헬퍼 ───────────────────────────────────────────────

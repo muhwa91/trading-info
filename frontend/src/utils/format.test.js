@@ -103,16 +103,16 @@ describe('formatProfitWon', () => {
 // ──────────────────────────────────────────────────────────────────
 
 describe('formatProfitUSD', () => {
-  it('양수 → "+$N.NN"', () => {
-    expect(formatProfitUSD(12.5)).toBe('+$12.50');
+  it('양수 → "+N.NN$"', () => {
+    expect(formatProfitUSD(12.5)).toBe('+12.50$');
   });
 
-  it('음수 → "-$N.NN"', () => {
-    expect(formatProfitUSD(-3.99)).toBe('-$3.99');
+  it('음수 → "-N.NN$"', () => {
+    expect(formatProfitUSD(-3.99)).toBe('-3.99$');
   });
 
-  it('0 → "+$0.00"', () => {
-    expect(formatProfitUSD(0)).toBe('+$0.00');
+  it('0 → "+0.00$"', () => {
+    expect(formatProfitUSD(0)).toBe('+0.00$');
   });
 
   it('null → "—"', () => {
@@ -124,8 +124,8 @@ describe('formatProfitUSD', () => {
   });
 
   it('소수점 2자리 고정', () => {
-    expect(formatProfitUSD(100)).toBe('+$100.00');
-    expect(formatProfitUSD(-0.1)).toBe('-$0.10');
+    expect(formatProfitUSD(100)).toBe('+100.00$');
+    expect(formatProfitUSD(-0.1)).toBe('-0.10$');
   });
 });
 
@@ -213,8 +213,8 @@ describe('formatPrice', () => {
     expect(formatPrice('KRW', 75000)).toBe('75,000원');
   });
 
-  it('USD → "$N.NN"', () => {
-    expect(formatPrice('USD', 210.5)).toBe('$210.50');
+  it('USD → "N.NN$"', () => {
+    expect(formatPrice('USD', 210.5)).toBe('210.50$');
   });
 
   it('null value → "—" (KRW)', () => {
@@ -230,7 +230,7 @@ describe('formatPrice', () => {
   });
 
   it('USD 정수도 소수점 2자리', () => {
-    expect(formatPrice('USD', 100)).toBe('$100.00');
+    expect(formatPrice('USD', 100)).toBe('100.00$');
   });
 
   it('KRW 반올림', () => {
@@ -247,7 +247,7 @@ describe('formatPrice', () => {
 // ──────────────────────────────────────────────────────────────────
 
 describe('profitColorClass', () => {
-  // KR 시장: 상승=rose, 하락=sky
+  // 국내·미국 구분 없이 상승=rose-400, 하락=sky-400 으로 통일
   it('KR 상승 → text-rose-400', () => {
     expect(profitColorClass(1000, 'kr')).toBe('text-rose-400');
   });
@@ -260,21 +260,21 @@ describe('profitColorClass', () => {
     expect(profitColorClass(0, 'kr')).toBe('text-rose-400');
   });
 
-  // US 시장: 상승=emerald, 하락=rose
-  it('US 상승 → text-emerald-400', () => {
-    expect(profitColorClass(500, 'us')).toBe('text-emerald-400');
+  // US 시장도 동일: 상승=rose, 하락=sky (market 인자 무시)
+  it('US 상승 → text-rose-400 (통일)', () => {
+    expect(profitColorClass(500, 'us')).toBe('text-rose-400');
   });
 
-  it('US 하락 → text-rose-400', () => {
-    expect(profitColorClass(-500, 'us')).toBe('text-rose-400');
+  it('US 하락 → text-sky-400 (통일)', () => {
+    expect(profitColorClass(-500, 'us')).toBe('text-sky-400');
   });
 
-  it('US 0 → text-emerald-400 (0은 상승 처리)', () => {
-    expect(profitColorClass(0, 'us')).toBe('text-emerald-400');
+  it('US 0 → text-rose-400 (0은 상승 처리, 통일)', () => {
+    expect(profitColorClass(0, 'us')).toBe('text-rose-400');
   });
 
   // NaN: Number(null)=0 이므로 상승 처리됨. 실제 NaN은 Number('abc') 등.
-  it('null → Number(null)=0 → KR 상승 처리(text-rose-400)', () => {
+  it('null → Number(null)=0 → 상승 처리(text-rose-400)', () => {
     // null은 Number()로 0이 되어 isNaN(0)=false, 0>=0 → 상승 색
     expect(profitColorClass(null, 'kr')).toBe('text-rose-400');
   });
@@ -293,6 +293,7 @@ describe('profitColorClass', () => {
 // ──────────────────────────────────────────────────────────────────
 
 describe('profitBadgeClass', () => {
+  // 국내·미국 구분 없이 상승=badge-kr-up(빨강), 하락=badge-kr-down(파랑)으로 통일
   it('KR 상승 → badge-kr-up', () => {
     expect(profitBadgeClass(1000, 'kr')).toBe('badge-kr-up');
   });
@@ -301,15 +302,15 @@ describe('profitBadgeClass', () => {
     expect(profitBadgeClass(-1000, 'kr')).toBe('badge-kr-down');
   });
 
-  it('US 상승 → badge-us-up', () => {
-    expect(profitBadgeClass(1000, 'us')).toBe('badge-us-up');
+  it('US 상승 → badge-kr-up (통일)', () => {
+    expect(profitBadgeClass(1000, 'us')).toBe('badge-kr-up');
   });
 
-  it('US 하락 → badge-us-down', () => {
-    expect(profitBadgeClass(-1000, 'us')).toBe('badge-us-down');
+  it('US 하락 → badge-kr-down (통일)', () => {
+    expect(profitBadgeClass(-1000, 'us')).toBe('badge-kr-down');
   });
 
-  it('null → Number(null)=0 → KR 상승 badge-kr-up (0은 상승 처리)', () => {
+  it('null → Number(null)=0 → 상승 badge-kr-up (0은 상승 처리)', () => {
     // Number(null)=0, isNaN(0)=false → badge-kr-up
     expect(profitBadgeClass(null, 'kr')).toBe('badge-kr-up');
   });

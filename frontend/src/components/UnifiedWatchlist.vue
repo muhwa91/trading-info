@@ -44,9 +44,9 @@
             </svg>
             <span class="hidden sm:inline">{{ migrating ? '이관 중...' : '기존 가져오기' }}</span>
           </button>
-          <!-- 종목 카운트 배지 -->
+          <!-- 종목 카운트 배지 (현재 탭 필터 기준) -->
           <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold font-mono text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 select-none">
-            {{ items.length }}
+            {{ filteredItems.length }}
           </span>
         </div>
       </div>
@@ -57,7 +57,7 @@
           v-for="m in SEARCH_MODE_OPTIONS"
           :key="m.value"
           type="button"
-          @click="searchMode = m.value; apiSearchResults = []"
+          @click="searchMode = m.value; apiSearchResults = []; emit('market-change', m.value)"
           :class="[
             'tab flex-1 rounded-md text-xs font-extrabold transition-all duration-200 cursor-pointer',
             searchMode === m.value
@@ -74,6 +74,7 @@
             v-model="searchQuery"
             @input="onSearchInput"
             @focus="showDropdown = true"
+            @keyup.enter="addBestMatch"
             type="text"
             :placeholder="searchMode === 'kr' ? '종목명 / 초성 / 티커' : searchMode === 'us' ? '티커 / 종목명' : '종목명 / 티커 검색'"
             class="input input-sm input-bordered join-item flex-1 font-semibold text-sm focus:outline-none focus:border-indigo-500/60 placeholder:text-base-content/25 uppercase bg-base-200/50"
@@ -174,10 +175,16 @@
         </div>
       </div>
 
+      <!-- 시장 필터 결과 없음 (전체엔 있으나 선택 시장엔 없음) -->
+      <div v-else-if="filteredItems.length === 0" class="flex flex-col items-center justify-center py-12 gap-2 select-none">
+        <p class="text-[11px] font-bold text-base-content/35">{{ searchMode === 'kr' ? '국내' : '미국' }} 관심 종목이 없습니다</p>
+        <p class="text-[11px] text-base-content/22">'전체'에서 모두 보거나 종목을 추가하세요</p>
+      </div>
+
       <!-- 종목 행 목록 -->
       <template v-else>
         <div
-          v-for="item in enrichedItems"
+          v-for="item in filteredItems"
           :key="item.watchlist_id"
           @click="emit('select', item.displayTicker)"
           role="listitem"
@@ -222,10 +229,10 @@
               :class="[
                 'font-extrabold text-sm font-mono transition-all duration-250 rounded px-1 py-0.5 leading-tight',
                 item.flash === 'up'
-                  ? (item.market === 'KR' ? 'bg-rose-500/15 text-rose-400 scale-105' : 'bg-emerald-500/15 text-emerald-400 scale-105')
+                  ? 'bg-rose-500/15 text-rose-400 scale-105'
                   : '',
                 item.flash === 'down'
-                  ? (item.market === 'KR' ? 'bg-sky-500/15 text-sky-400 scale-105' : 'bg-rose-500/15 text-rose-400 scale-105')
+                  ? 'bg-sky-500/15 text-sky-400 scale-105'
                   : '',
                 !item.flash ? 'text-white/90' : ''
               ]"
@@ -238,8 +245,8 @@
               :class="[
                 'text-[10px] font-extrabold font-mono px-1 py-0.5 rounded leading-tight',
                 item.changePercent >= 0
-                  ? (item.market === 'KR' ? 'text-rose-400 bg-rose-500/8' : 'text-emerald-400 bg-emerald-500/8')
-                  : (item.market === 'KR' ? 'text-sky-400 bg-sky-500/8' : 'text-rose-400 bg-rose-500/8')
+                  ? 'text-rose-400 bg-rose-500/8'
+                  : 'text-sky-400 bg-sky-500/8'
               ]"
             >{{ item.changePercent >= 0 ? '+' : '' }}{{ item.changePercent.toFixed(2) }}%</span>
             <span v-else-if="item.hasPrice" class="text-[10px] text-base-content/25 font-mono">---</span>
@@ -265,7 +272,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import axios from 'axios';
 import { localSearch, normalizeKrTicker, SEARCHABLE_STOCKS } from '../stocksKnown.js';
 
@@ -312,8 +319,8 @@ function parseLocalStorageTicker(raw) {
 }
 
 const SEARCH_MODE_OPTIONS = [
-  { value: 'kr',  label: 'KR' },
-  { value: 'us',  label: 'US' },
+  { value: 'kr',  label: '국내' },
+  { value: 'us',  label: '미국' },
   { value: 'all', label: '전체' },
 ];
 
@@ -349,6 +356,24 @@ const props = defineProps({
     type: String,
     default: '',
   },
+
+  /**
+   * 차트 영역의 국내/미국 토글 값('KR' | 'US').
+   * 이 값이 바뀌면 사이드바 탭(한국/미국)도 연동해 따라간다.
+   */
+  marketSync: {
+    type: String,
+    default: '',
+  },
+
+  /**
+   * 하단 차트 그리드의 종목 순서(심볼 배열).
+   * 차트를 드래그로 재배치하면 사이드바 목록도 이 순서를 따라 정렬된다.
+   */
+  gridOrder: {
+    type: Array,
+    default: () => [],
+  },
 });
 
 const emit = defineEmits([
@@ -364,6 +389,12 @@ const emit = defineEmits([
    * 상위(App.vue)가 GET /api/portfolio/dashboard 를 재조회해 items 를 갱신한다.
    */
   'changed',
+
+  /**
+   * 탭(국내/미국/전체) 클릭 시. payload: 'kr' | 'us' | 'all'.
+   * 상위(App.vue)가 하단 차트 그리드 시장을 연동 전환한다('all'은 무시).
+   */
+  'market-change',
 ]);
 
 // ── 템플릿 ref ───────────────────────────────────────────────────
@@ -375,6 +406,13 @@ const searchContainer = ref(null);
 // 검색
 const searchQuery = ref('');
 const searchMode = ref('all');
+
+// 차트 영역의 국내/미국 토글과 사이드바 탭 연동:
+// gridMarket(KR/US)이 바뀌면 사이드바 탭도 한국/미국으로 따라간다.
+watch(() => props.marketSync, (val) => {
+  if (val === 'KR') searchMode.value = 'kr';
+  else if (val === 'US') searchMode.value = 'us';
+}, { immediate: true });
 const apiSearchResults = ref([]);
 const showDropdown = ref(false);
 const searchDebounce = ref(null);
@@ -437,6 +475,24 @@ const enrichedItems = computed(() => {
   });
 });
 
+// 탭(한국/미국/전체)에 따라 표시 목록을 분리하고, 하단 차트 그리드 순서에 맞춰 정렬한다.
+// (차트를 드래그로 재배치하면 gridOrder 가 바뀌어 사이드바 목록 순서도 연동된다.)
+const filteredItems = computed(() => {
+  let items = enrichedItems.value;
+  if (searchMode.value === 'kr') items = items.filter(it => it.market === 'KR');
+  else if (searchMode.value === 'us') items = items.filter(it => it.market === 'US');
+
+  const order = (props.gridOrder || []).filter(s => typeof s === 'string' && s !== '');
+  if (order.length === 0) return items;
+
+  // 그리드에 있는 종목은 그리드 순서대로 앞에, 나머지는 기존 순서대로 뒤에(안정 정렬).
+  const idxOf = (sym) => {
+    const i = order.indexOf(sym);
+    return i === -1 ? Infinity : i;
+  };
+  return [...items].sort((a, b) => idxOf(a.symbol) - idxOf(b.symbol));
+});
+
 /**
  * localSearch 즉시 결과 + apiSearchResults 를 ticker 기준 중복 제거 후 병합.
  * 최대 10건.
@@ -445,10 +501,13 @@ const mergedSearchResults = computed(() => {
   const q = searchQuery.value.trim();
   if (!q) return [];
 
+  const qLower = q.toLowerCase();
+  const hasHangulSyllable = /[가-힣]/.test(q);
+
   const localMatches = localSearch(q, searchMode.value);
   const seenTickers = new Set(localMatches.map(m => m.ticker));
 
-  const apiMatches = apiSearchResults.value
+  let apiMatches = apiSearchResults.value
     .filter(s => !seenTickers.has(s.ticker))
     .map(s => ({
       ticker: s.ticker,
@@ -457,7 +516,34 @@ const mergedSearchResults = computed(() => {
       isKorean: s.isKorean,
     }));
 
-  return [...localMatches, ...apiMatches].slice(0, 10);
+  // 한글(완성형) 검색어인데 종목명/티커에 그 검색어가 실제로 들어있지 않은
+  // API 느슨한 매칭은 제거한다. 예: '마이크론' 검색에 '마이크로소프트' 같은 비일치 항목 제외.
+  if (hasHangulSyllable) {
+    apiMatches = apiMatches.filter(s =>
+      String(s.name).toLowerCase().includes(qLower) ||
+      String(s.ticker).toLowerCase().includes(qLower)
+    );
+  }
+
+  // 관련도 점수: 정확일치 > 접두 일치 > 부분 포함 > 그 외(초성·영문명 등) 순으로 정렬.
+  // 이로써 '마이크론' → '마이크론 테크놀로지(MU)'가 최상단에 오고, Enter 시에도 올바른 종목이 추가된다.
+  const scoreOf = (item) => {
+    const name = String(item.name || '').toLowerCase();
+    const ticker = String(item.ticker || '').toLowerCase();
+    if (ticker === qLower) return 100;
+    if (name === qLower) return 96;
+    if (ticker.startsWith(qLower)) return 92;
+    if (name.startsWith(qLower)) return 88;
+    if (name.includes(qLower)) return 72;
+    if (ticker.includes(qLower)) return 64;
+    return 40;
+  };
+
+  return [...localMatches, ...apiMatches]
+    .map((item) => ({ item, s: scoreOf(item) }))
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.item)
+    .slice(0, 10);
 });
 
 // ── 라이프사이클 ─────────────────────────────────────────────────
@@ -527,6 +613,20 @@ function clearSearch() {
   apiSearchResults.value = [];
   showDropdown.value = false;
   errorMsg.value = '';
+}
+
+// 검색창에서 Enter → 검색어와 가장 잘 맞는 종목을 바로 관심 추가
+// (티커/종목명이 정확히 일치하면 그것을, 아니면 최상위 검색 결과를 추가)
+function addBestMatch() {
+  const results = mergedSearchResults.value;
+  if (!results || results.length === 0) return;
+  const q = searchQuery.value.trim().toLowerCase();
+  const exact = results.find(s =>
+    String(s.ticker).toLowerCase() === q ||
+    normalizeKrTicker(String(s.ticker)).toLowerCase() === q ||
+    String(s.name).toLowerCase() === q
+  );
+  addItem(exact || results[0]);
 }
 
 function handleClickOutside(e) {
@@ -669,9 +769,10 @@ async function migrateLocalStorage() {
 function formatPrice(market, price) {
   if (price === null || price === undefined) return '---';
   if (market === 'KR') {
-    return `₩${Math.round(price).toLocaleString()}`;
+    // 한국 주식은 통화기호(₩) 대신 '원' 접미사로 표기 (앱 전체 표기와 일치)
+    return `${Math.round(price).toLocaleString()}원`;
   }
-  return `$${Number(price).toFixed(2)}`;
+  return `${Number(price).toFixed(2)}$`;
 }
 </script>
 

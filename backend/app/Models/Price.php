@@ -18,6 +18,7 @@ class Price extends Model
     protected $fillable = [
         'stock_id',
         'price',
+        'regular_close',
         'change_amount',
         'change_percent',
         'session',
@@ -27,6 +28,7 @@ class Price extends Model
 
     protected $casts = [
         'price'          => 'decimal:4',
+        'regular_close'  => 'decimal:4',
         'change_amount'  => 'decimal:4',
         'change_percent' => 'decimal:4',
         'recorded_at'    => 'datetime',

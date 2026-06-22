@@ -1,11 +1,12 @@
 <template>
-  <div class="min-h-screen bg-base-300 text-base-content font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden">
+  <div class="h-screen bg-base-300 text-base-content font-sans flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200 overflow-hidden">
 
     <!-- ── 상단 고정 영역 (헤더 + 손익 요약 바) ── -->
     <div class="sticky top-0 z-50 shrink-0">
       <!-- Header -->
       <header class="navbar bg-base-100/75 backdrop-blur-lg border-b border-base-content/8 px-4 sm:px-6 min-h-0 py-2 sm:py-2.5 shrink-0 select-none shadow-sm">
-        <div class="flex-1 flex items-center gap-3 min-w-0">
+        <!-- 로고 -->
+        <div class="flex items-center gap-3 min-w-0 shrink-0">
           <!-- 로고 아이콘 (클릭 → 메인으로 이동) -->
           <div
             class="w-9 h-9 bg-indigo-600 hover:rotate-12 hover:scale-110 active:scale-95 transition-all duration-300 ease-out rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-600/30 cursor-pointer shrink-0"
@@ -22,10 +23,49 @@
           </div>
 
           <!-- 앱 이름 -->
-          <span class="block text-base font-black tracking-tight text-base-content/80 shrink-0">Stockpit</span>
+          <span class="hidden sm:block text-base font-black tracking-tight text-base-content/80 shrink-0">Stockpit</span>
         </div>
 
-        <div class="flex-none flex items-center gap-2.5">
+        <!-- 손익 요약 바 (헤더에 통합 — 환율·미국/국내 손익) -->
+        <div class="flex-1 min-w-0 flex items-center overflow-x-auto custom-scrollbar px-2 sm:px-4">
+          <PortfolioSummaryBar
+            :holdings="liveHoldings"
+            :exchange-rate="dashboardData ? dashboardData.exchange_rate : null"
+            :compact="true"
+          />
+        </div>
+
+        <div class="flex-none flex items-center gap-2">
+          <!-- 사이드바 좌/우 위치 토글 -->
+          <button
+            @click="sidebarPosition = sidebarPosition === 'left' ? 'right' : 'left'"
+            :title="sidebarPosition === 'left' ? '관심종목 사이드바를 오른쪽으로' : '관심종목 사이드바를 왼쪽으로'"
+            aria-label="사이드바 좌우 위치 변경"
+            class="w-8 h-8 flex items-center justify-center rounded-lg text-base-content/55 hover:text-white hover:bg-base-200/60 border border-base-content/8 transition-all duration-200 cursor-pointer shrink-0"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l-3 3 3 3M16 9l3 3-3 3M5 12h14" />
+            </svg>
+          </button>
+
+          <!-- 사이드바 열기/닫기 토글 -->
+          <button
+            @click="isSidebarCollapsed = !isSidebarCollapsed"
+            :title="isSidebarCollapsed ? '관심종목 사이드바 열기' : '관심종목 사이드바 닫기'"
+            :aria-label="isSidebarCollapsed ? '사이드바 열기' : '사이드바 닫기'"
+            :class="[
+              'w-8 h-8 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer shrink-0',
+              isSidebarCollapsed
+                ? 'bg-indigo-600/90 text-white border-indigo-400/40 ring-2 ring-indigo-500/25 hover:bg-indigo-500 animate-pulse-soft'
+                : 'text-base-content/55 hover:text-white hover:bg-base-200/60 border-base-content/8'
+            ]"
+          >
+            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 4v16" />
+            </svg>
+          </button>
+
           <!-- WebSocket 상태 필 -->
           <div
             :class="[
@@ -48,19 +88,10 @@
           </div>
         </div>
       </header>
-
-      <!-- 손익 요약 바 (헤더 바로 아래, sticky 영역 안) -->
-      <div class="px-3 sm:px-6 py-1.5 sm:py-2 bg-base-100/60 backdrop-blur-md border-b border-base-content/8">
-        <PortfolioSummaryBar
-          :holdings="dashboardData ? dashboardData.holdings : []"
-          :exchange-rate="dashboardData ? dashboardData.exchange_rate : null"
-          :compact="windowWidth < 640"
-        />
-      </div>
     </div>
 
     <!-- ── 스크롤 영역 (사이드바 + 메인) ── -->
-    <div :class="['flex-1 flex overflow-hidden overflow-x-hidden', sidebarPosition === 'right' ? 'flex-col-reverse md:flex-row-reverse' : 'flex-col md:flex-row']">
+    <div :class="['flex-1 flex overflow-hidden overflow-x-hidden min-h-0', sidebarPosition === 'right' ? 'flex-col-reverse md:flex-row-reverse' : 'flex-col md:flex-row']">
 
       <!-- UnifiedWatchlist 사이드바 -->
       <aside
@@ -81,37 +112,17 @@
             :items="dashboardData ? dashboardData.watchlist : []"
             :prices-map="watchlistDetailsMap"
             :selected-ticker="gridTickers[activeGridIndex]"
+            :market-sync="gridMarket"
+            :grid-order="gridTickers"
             @select="handleUnifiedSelect"
             @changed="onWatchlistChanged"
+            @market-change="onSidebarMarketChange"
           />
         </div>
-
-        <!-- 사이드바 토글 버튼 -->
-        <button
-          @click="isSidebarCollapsed = !isSidebarCollapsed"
-          :aria-label="isSidebarCollapsed ? '사이드바 열기' : '사이드바 닫기'"
-          :title="isSidebarCollapsed ? '관심 종목 사이드바 열기' : '사이드바 닫기'"
-          :class="[
-            'absolute z-40 transition-all duration-250 ease-out cursor-pointer flex items-center justify-center active:scale-95 rounded-full',
-            isSidebarCollapsed
-              ? 'bg-indigo-600 text-white border-2 border-indigo-300/50 ring-4 ring-indigo-500/20 shadow-xl shadow-indigo-600/40 hover:bg-indigo-500 hover:scale-110 animate-pulse-soft w-12 h-6 md:w-6 md:h-16'
-              : 'bg-base-200/95 border border-base-content/12 text-base-content/60 shadow-lg hover:bg-indigo-600 hover:border-indigo-500 hover:text-white hover:scale-105 w-10 h-5 md:w-5 md:h-10',
-            sidebarPosition === 'left'
-              ? 'bottom-0 translate-y-1/2 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:right-0 md:translate-x-1/2 md:left-auto md:bottom-auto'
-              : 'top-0 -translate-y-1/2 left-1/2 -translate-x-1/2 md:top-1/2 md:-translate-y-1/2 md:left-0 md:-translate-x-1/2 md:right-auto md:bottom-auto'
-          ]"
-        >
-          <svg :class="['hidden md:block', isSidebarCollapsed ? 'h-4 w-4' : 'h-3 w-3']" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-            <path stroke-linecap="round" stroke-linejoin="round" :d="desktopCollapseIcon" />
-          </svg>
-          <svg :class="['block md:hidden', isSidebarCollapsed ? 'h-4 w-4' : 'h-3 w-3']" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-            <path stroke-linecap="round" stroke-linejoin="round" :d="mobileCollapseIcon" />
-          </svg>
-        </button>
       </aside>
 
       <!-- 메인 패널 -->
-      <main ref="mainScroll" class="flex-1 flex flex-col p-3 md:p-5 overflow-y-auto overflow-x-hidden space-y-4 md:space-y-5 bg-base-300">
+      <main ref="mainScroll" class="flex-1 flex flex-col min-h-0 min-w-0 p-3 md:p-5 overflow-y-auto overflow-x-hidden space-y-4 md:space-y-5 bg-base-300">
 
         <!-- WS 로딩 스켈레톤 -->
         <div v-if="loading" class="flex flex-col space-y-4 md:space-y-5 animate-pulse">
@@ -143,27 +154,44 @@
             <div v-for="n in 2" :key="n" class="skeleton h-48 rounded-2xl"></div>
           </div>
 
-          <!-- 2×2 그리드 스켈레톤 -->
-          <div class="grid gap-4 grid-cols-1 md:grid-cols-2">
-            <div v-for="n in 4" :key="n" class="skeleton h-72 sm:h-80 rounded-2xl"></div>
+          <!-- 종목 그리드 스켈레톤 (최대 6개) -->
+          <div class="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            <div v-for="n in 6" :key="n" class="skeleton h-72 sm:h-80 rounded-2xl"></div>
           </div>
         </div>
 
         <div v-else class="flex flex-col space-y-4 md:space-y-5">
 
-          <!-- ① 보유 상세 패널 (최상단) -->
-          <HoldingsPanel
-            :holdings="dashboardData ? dashboardData.holdings : []"
-            @refresh="fetchDashboard"
-          />
+          <!-- ① 보유 상세 패널 (최상단, 스크롤해도 상단 고정) -->
+          <div class="sticky top-0 z-30">
+            <HoldingsPanel
+              :holdings="liveHoldings"
+              :exchange-rate="dashboardData ? dashboardData.exchange_rate : null"
+              @refresh="fetchDashboard"
+            />
+          </div>
 
-          <!-- ② 지수 영역: NQ=F + 코스피(야간선물 or 종합지수) -->
-          <!-- visibleIndexTickers: 나스닥 + (정규장=종합지수 / 야간=야간선물 / 그 외 없음) -->
-          <div :class="['grid gap-4 shrink-0 items-start transition-all duration-300', visibleIndexTickers.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2']">
+          <!-- ② 지수 영역: NQ=F + 코스피(야간선물 or 종합지수) — 접기/펼치기 -->
+          <div class="flex flex-col gap-3">
+            <!-- 접기/펼치기 헤더 -->
+            <button
+              type="button"
+              @click="indexCollapsed = !indexCollapsed"
+              class="flex items-center gap-2 px-3 py-2 rounded-xl bg-base-100/40 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 transition-all duration-200 cursor-pointer select-none"
+              :aria-expanded="!indexCollapsed"
+              aria-label="지수 영역 접기/펼치기"
+            >
+              <svg :class="['h-3.5 w-3.5 text-white transition-transform duration-200', indexCollapsed ? '-rotate-90' : '']" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+              <span class="text-xs font-extrabold text-white tracking-wider uppercase">지수 · 나스닥 / 코스피</span>
+            </button>
+            <!-- visibleIndexTickers: 나스닥 + (정규장=종합지수 / 야간=야간선물 / 그 외 없음) -->
+            <div v-show="!indexCollapsed" :class="['grid gap-4 shrink-0 items-start transition-all duration-300', visibleIndexTickers.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2']">
             <div
               v-for="ticker in visibleIndexTickers"
               :key="ticker"
-              :class="indexDisplayMode(ticker) === 'chart' ? 'h-72 sm:h-80 lg:h-90' : 'h-44'"
+              :class="indexDisplayMode(ticker) === 'chart' ? 'h-72 sm:h-80 lg:h-90' : 'h-60'"
               class="card bg-base-100/45 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/5 transition-all duration-300 p-4 flex flex-col gap-3 rounded-2xl card-hover"
             >
               <div class="flex-1 min-h-0">
@@ -201,29 +229,73 @@
               </div>
             </div>
           </div>
+          </div>
 
-          <!-- ③ 종목 차트 그리드 (2×2) -->
-          <div
-            :class="[
-              'grid gap-4 shrink-0 items-start transition-all duration-300',
-              activeGridTickersCount === 1
-                ? 'grid-cols-1'
-                : 'grid-cols-1 md:grid-cols-2'
-            ]"
-          >
+          <!-- ③ 종목 차트 그리드 (2×2) — 국내/미국 스왑 -->
+          <div class="flex flex-col gap-3">
+            <!-- 국내/미국 토글 -->
+            <div class="flex items-center gap-2">
+              <div class="tabs tabs-boxed bg-base-100/40 backdrop-blur-md p-0.5 rounded-xl border border-base-content/8 gap-0">
+                <button
+                  v-for="m in [{ v: 'KR', l: '국내' }, { v: 'US', l: '미국' }]"
+                  :key="m.v"
+                  type="button"
+                  @click="setGridMarket(m.v)"
+                  :class="[
+                    'tab rounded-lg text-xs font-extrabold transition-all duration-200 cursor-pointer px-4 py-1',
+                    gridMarket === m.v
+                      ? 'tab-active bg-indigo-600/15 border border-indigo-500/25 text-indigo-300'
+                      : 'text-base-content/45 hover:text-base-content/70 border border-transparent'
+                  ]"
+                  :aria-pressed="gridMarket === m.v"
+                >{{ m.l }}</button>
+              </div>
+
+              <!-- 현재 시장 세션 배지 (토글 옆) -->
+              <span
+                v-if="gridSessionLabel"
+                :class="[
+                  'inline-flex items-center justify-center px-4 h-8 rounded-lg text-xs font-extrabold leading-tight shrink-0 border',
+                  gridSessionLabel === '주간거래' ? 'text-emerald-400 bg-emerald-500/8 border-emerald-500/20' : '',
+                  gridSessionLabel === '프리마켓' ? 'text-amber-400 bg-amber-500/8 border-amber-500/20' : '',
+                  gridSessionLabel === '정규장'   ? 'text-pink-400  bg-pink-500/8  border-pink-500/20'  : '',
+                  (gridSessionLabel === '애프터마켓' || gridSessionLabel === '야간거래' || gridSessionLabel === '거래중')
+                                                  ? 'text-cyan-400  bg-cyan-500/8  border-cyan-500/20'  : '',
+                  gridSessionLabel === '장마감'   ? 'text-base-content/40 bg-base-200/40 border-base-content/10' : ''
+                ]"
+              >{{ gridSessionLabel }}</span>
+            </div>
+            <div
+              :class="[
+                'grid gap-4 shrink-0 items-start transition-all duration-300',
+                activeGridTickersCount === 1
+                  ? 'grid-cols-1'
+                  : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+              ]"
+            >
             <div
               v-for="(ticker, idx) in gridTickers"
               :key="idx"
               v-show="ticker !== '' || activeGridTickersCount !== 1"
+              :draggable="!!ticker"
               @click="activeGridIndex = idx"
+              @dragstart="onGridDragStart(idx, $event)"
+              @dragend="onGridDragEnd"
+              @dragover.prevent="onGridDragOver(idx)"
+              @dragleave="onGridDragLeave(idx)"
+              @drop="onGridDrop(idx)"
               :class="[
-                'relative card bg-base-100/45 backdrop-blur-md border transition-all duration-250 cursor-pointer overflow-hidden rounded-2xl',
-                (gridStockData[idx] && gridStockData[idx].is_trading_day === false)
-                  ? 'h-44'
+                'group relative card bg-base-100/45 backdrop-blur-md border transition-all duration-250 overflow-hidden rounded-2xl',
+                ticker ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                isGridClosed(idx)
+                  ? 'h-60'
                   : (activeGridTickersCount === 1 ? 'h-80 sm:h-96 lg:h-120' : 'h-72 sm:h-80 lg:h-110'),
-                activeGridIndex === idx
-                  ? 'border-indigo-500/60 shadow-xl shadow-indigo-500/8 ring-1 ring-indigo-500/20'
-                  : 'border-base-content/8 hover:border-base-content/20 hover:shadow-md'
+                gridDragOverIdx === idx
+                  ? 'border-indigo-400 ring-2 ring-indigo-400/50'
+                  : (activeGridIndex === idx
+                    ? 'border-indigo-500/60 shadow-xl shadow-indigo-500/8 ring-1 ring-indigo-500/20'
+                    : 'border-base-content/8 hover:border-base-content/20 hover:shadow-md'),
+                gridDraggingIdx === idx ? 'opacity-50' : ''
               ]"
             >
               <!-- 활성 카드 상단 강조 바 -->
@@ -232,9 +304,10 @@
                 class="absolute top-0 left-4 right-4 h-0.5 rounded-b-full bg-indigo-500/70"
               ></div>
 
+
               <template v-if="ticker && gridStockData[idx]">
-                <!-- 휴장일: 숫자 표시 + 차트 보기 버튼 -->
-                <div v-if="gridStockData[idx].is_trading_day === false" class="h-full flex flex-col items-center justify-center gap-2 select-none px-4 text-center">
+                <!-- 휴장/장마감: 종가 숫자 표시 + 차트 보기 버튼 -->
+                <div v-if="isGridClosed(idx)" class="h-full flex flex-col items-center justify-center gap-2 select-none px-4 text-center">
                   <span class="text-xs font-bold text-base-content/45 tracking-widest uppercase">{{ gridStockData[idx].name }}</span>
                   <span class="text-[2.25rem] font-black font-mono tracking-tight leading-none" :class="quoteColorClass(ticker, gridStockData[idx].change_amount)">
                     {{ formatStockValue(ticker, gridStockData[idx].current_price) }}
@@ -244,7 +317,7 @@
                     <span>{{ ((gridStockData[idx].change_amount || 0) >= 0 ? '+' : '') + formatStockValue(ticker, gridStockData[idx].change_amount) }}</span>
                     <span class="opacity-75">({{ ((gridStockData[idx].change_amount || 0) >= 0 ? '+' : '') + Number(gridStockData[idx].change_percent).toFixed(2) }}%)</span>
                   </div>
-                  <span class="text-[10px] font-semibold text-base-content/35 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full bg-base-200/50 border border-base-content/8">휴장 · 전일 마감</span>
+                  <span class="text-[10px] font-semibold text-base-content/35 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full bg-base-200/50 border border-base-content/8">{{ gridStockData[idx].is_trading_day === false ? '휴장 · 전일 마감' : '장마감 · 종가' }}</span>
                   <button
                     @click.stop="openGridChartModal(ticker, idx)"
                     class="mt-1 flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-bold border border-indigo-500/30 text-indigo-400 bg-indigo-500/8 hover:bg-indigo-500/18 hover:border-indigo-400/50 transition-all duration-200 cursor-pointer"
@@ -270,6 +343,7 @@
                   :candles="gridStockData[idx].candles"
                   :session="gridStockData[idx].session || ''"
                   :usd-krw-rate="usdKrwRate"
+                  :average-price="getAveragePriceForTicker(ticker)"
                   @timeframe-change="handleTimeframeChange(idx, $event)"
                 />
               </template>
@@ -293,6 +367,7 @@
                 </div>
               </div>
             </div>
+          </div>
           </div>
 
         </div>
@@ -364,6 +439,7 @@
               :session="gridChartModal.session"
               :timeframe="gridChartModal.timeframe"
               :usd-krw-rate="usdKrwRate"
+              :average-price="getAveragePriceForTicker(gridChartModal.ticker)"
               @timeframe-change="onGridChartTimeframeChange"
             />
             <div v-else-if="!gridChartModal.loading" class="h-full flex flex-col items-center justify-center gap-3">
@@ -388,13 +464,17 @@ const mainScroll = ref(null);
 const gridChartModalEl = ref(null);
 
 // ── WS 관련 상태 ───────────────────────────────────────────────
-const gridTickers = ref(['', '', '', '']);
-const gridStockData = ref([null, null, null, null]);
-const gridTimeframes = ref(['3m', '3m', '3m', '3m']);
+const GRID_SIZE = 6; // 차트 그리드 슬롯 개수
+const gridTickers = ref(Array(GRID_SIZE).fill(''));
+const gridStockData = ref(Array(GRID_SIZE).fill(null));
+const stockDataCache = ref({}); // 티커별 마지막 WS 데이터 캐시 — 시장 토글 시 즉시 표시용
+const gridTimeframes = ref(Array(GRID_SIZE).fill('3m'));
 const indexTickers = ref(['NQ=F', 'KOSPI200', 'KOSPI_NIGHT']);
 const indexStockData = ref({ 'NQ=F': null, 'KOSPI200': null, 'KOSPI_NIGHT': null });
 const indexTimeframes = ref({ 'NQ=F': '3m', 'KOSPI200': '3m', 'KOSPI_NIGHT': '3m' });
 const activeGridIndex = ref(0);
+const gridDraggingIdx = ref(null); // 드래그 중인 그리드 슬롯
+const gridDragOverIdx = ref(null); // 드롭 대상으로 올라온 그리드 슬롯
 const loading = ref(true);
 const error = ref(false);
 const ws = ref(null);
@@ -404,6 +484,8 @@ const usdKrwRate = ref(1380.00);
 // ── 레이아웃 ───────────────────────────────────────────────────
 const sidebarPosition = ref(localStorage.getItem('sidebarPosition') || 'left');
 const isSidebarCollapsed = ref(localStorage.getItem('isSidebarCollapsed') === 'true');
+const indexCollapsed = ref(localStorage.getItem('indexCollapsed') === 'true'); // 지수(나스닥·코스피) 영역 접힘 여부
+const gridMarket = ref(localStorage.getItem('gridMarket') === 'US' ? 'US' : 'KR'); // 하단 그리드 시장 필터(국내/미국)
 const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
 
 // ── 포트폴리오 대시보드 ────────────────────────────────────────
@@ -412,6 +494,10 @@ const dashboardLoading = ref(false);
 const dashboardError = ref(null);
 const dashboardPollTimer = ref(null);
 const gridInitialized = ref(false);    // 초기 2×2 배치 완료 여부
+
+// WS 실시간 가격 맵: 보유종목 심볼 → current_price (폴링과 별개로 실시간 덮어쓰기용)
+// 키는 normalizeTicker() 기준 소문자 코드 (예: "0167a0", "mu")
+const livePrices = ref({});
 
 // ── 휴장 카드 차트 모달 ────────────────────────────────────────
 const gridChartModal = reactive({
@@ -442,10 +528,75 @@ const activeGridTickersCount = computed(() => {
   return gridTickers.value.filter(t => t !== '').length;
 });
 
+// 현재 그리드 시장의 세션 라벨(정규장/주간거래/장마감 등). 같은 시장이면 모든 카드가 동일하므로
+// 처음 로드된 카드의 session 을 대표로 사용 → 국내/미국 토글 옆 배지로 표시.
+const gridSessionLabel = computed(() => {
+  const d = gridStockData.value.find(x => x && x.session);
+  return d ? d.session : '';
+});
+
 // DB 관심종목 심볼 배열
 const dbWatchlistSymbols = computed(() => {
   if (!dashboardData.value || !Array.isArray(dashboardData.value.watchlist)) return [];
   return dashboardData.value.watchlist.map(w => w.symbol).filter(s => typeof s === 'string' && s.trim() !== '');
+});
+
+// 관심종목을 시장(KR/US)별 심볼 배열로 — 하단 그리드 국내/미국 토글에 사용
+const watchlistByMarket = computed(() => {
+  const wl = (dashboardData.value && Array.isArray(dashboardData.value.watchlist)) ? dashboardData.value.watchlist : [];
+  const pick = (mkt) => wl.filter(w => w.market === mkt).map(w => w.symbol).filter(s => typeof s === 'string' && s.trim() !== '');
+  return { KR: pick('KR'), US: pick('US') };
+});
+
+/**
+ * 보유종목 WS 실시간 가격 반영 computed.
+ * - 폴링(10초)으로 받은 dashboardData.holdings 를 기반으로 하되,
+ *   livePrices 에 해당 심볼의 실시간 가격이 있으면 current_price 를 교체하고
+ *   파생 필드(profitRate, profitKRW, marketValueKRW, costKRW)를 재계산한다.
+ * - 라이브 가격이 없으면 원본 holding 데이터를 그대로 사용(폴백).
+ * - HoldingsPanel, PortfolioSummaryBar 모두 이 computed 를 받는다.
+ */
+const liveHoldings = computed(() => {
+  if (!dashboardData.value || !Array.isArray(dashboardData.value.holdings)) return [];
+  return dashboardData.value.holdings.map(h => {
+    const key = normalizeTicker(h.symbol);
+    const livePrice = livePrices.value[key];
+    // 라이브 가격이 없거나 유효하지 않으면 원본 그대로 반환
+    if (livePrice === undefined || livePrice === null || isNaN(Number(livePrice))) return h;
+    const cur = Number(livePrice);
+    const avg = Number(h.average_price);
+    const qty = Number(h.quantity);
+    // 평단가나 수량이 올바르지 않으면 원본 반환
+    if (isNaN(avg) || isNaN(qty) || avg <= 0 || qty <= 0) return h;
+    const profitRate = (cur - avg) / avg;
+    if (h.market === 'KR') {
+      // 원화 종목: profitKRW, marketValueKRW, costKRW 재계산
+      const profitKRW = (cur - avg) * qty;
+      const marketValueKRW = cur * qty;
+      const costKRW = avg * qty;
+      return {
+        ...h,
+        current_price: cur,
+        price_available: true,
+        profitRate,
+        profitKRW,
+        marketValueKRW,
+        costKRW,
+      };
+    } else {
+      // 미국 종목: WS 실시간가는 연장 현재가(current_price)에만 반영.
+      // regular_close_price 는 대시보드 폴링값(KIS base 기준)을 그대로 유지해
+      // 미실현손익 계산 기준이 실시간으로 변하지 않도록 한다.
+      // profitRate 는 연장가 포함 총 손익률 (current_price 기준).
+      return {
+        ...h,
+        current_price: cur,
+        price_available: true,
+        profitRate,
+        // regular_close_price 는 h(원본)에서 그대로 상속됨 (...h 스프레드)
+      };
+    }
+  });
 });
 
 // 시간대별 지수 노출 규칙 (서로 스왑)
@@ -488,20 +639,6 @@ const isKospiNightSession = computed(() => {
   return eveningTradingDay || morningAfterTradingDay;
 });
 
-const desktopCollapseIcon = computed(() => {
-  const left = sidebarPosition.value === 'left';
-  const collapsed = isSidebarCollapsed.value;
-  if (left) return collapsed ? 'M9 5l7 7-7 7' : 'M15 19l-7-7 7-7';
-  return collapsed ? 'M15 19l-7-7 7-7' : 'M9 5l7 7-7 7';
-});
-
-const mobileCollapseIcon = computed(() => {
-  const left = sidebarPosition.value === 'left';
-  const collapsed = isSidebarCollapsed.value;
-  if (left) return collapsed ? 'M19 9l-7 7-7-7' : 'M5 15l7-7 7 7';
-  return collapsed ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7';
-});
-
 // ── watch ──────────────────────────────────────────────────────
 
 watch(isSidebarCollapsed, (val) => {
@@ -512,17 +649,79 @@ watch(sidebarPosition, (val) => {
   localStorage.setItem('sidebarPosition', val);
 });
 
-// ── created() 로직 (setup 본문) ────────────────────────────────
-// 최초 마운트 전 localStorage watchlist로 그리드 임시 초기화
-// (dashboard API 응답 전까지 빈 상태 방지)
-const saved = localStorage.getItem('watchlist');
-if (saved) {
-  try {
-    const wl = JSON.parse(saved);
-    for (let i = 0; i < 4 && i < wl.length; i++) {
-      if (wl[i]) gridTickers.value[i] = wl[i];
+watch(indexCollapsed, (val) => {
+  localStorage.setItem('indexCollapsed', val);
+});
+
+watch(gridMarket, (val) => {
+  localStorage.setItem('gridMarket', val);
+});
+
+// 그리드는 DB 관심종목(dbWatchlistSymbols)이 유일한 소스다.
+// (과거 사용하던 localStorage 'watchlist' 키는 더 이상 읽지 않는다 — 관심종목에서
+//  지운 종목이 그 캐시 때문에 그리드에 계속 남는 버그가 있었음. 대시보드 로드 시 채운다.)
+localStorage.removeItem('watchlist');
+
+// 그리드를 DB 관심종목(현재 선택된 시장)과 일치시킨다: ① 해당 시장 관심종목에 없는
+// 그리드 종목 제거, ② 빈 칸을 아직 표시되지 않은 관심종목으로 앞에서부터 채움(최대 4칸).
+// 기존에 표시 중인(여전히 유효한) 종목의 위치·순서는 보존한다.
+function reconcileGridWithWatchlist() {
+  const wl = gridMarket.value === 'US' ? watchlistByMarket.value.US : watchlistByMarket.value.KR;
+  gridTickers.value.forEach((t, i) => {
+    if (t && !wl.includes(t)) gridTickers.value.splice(i, 1, '');
+  });
+  const shown = new Set(gridTickers.value.filter(Boolean));
+  const remaining = wl.filter(s => !shown.has(s));
+  for (let i = 0; i < GRID_SIZE && remaining.length > 0; i++) {
+    if (gridTickers.value[i] === '') {
+      gridTickers.value.splice(i, 1, remaining.shift());
     }
-  } catch (_) { /* ignore */ }
+  }
+}
+
+// 하단 그리드 시장 전환(국내 ↔ 미국) — 그리드를 비우고 선택 시장 관심종목으로 다시 채움
+function setGridMarket(market) {
+  if (gridMarket.value === market) return;
+  gridMarket.value = market;
+  gridTickers.value = Array(GRID_SIZE).fill('');
+  activeGridIndex.value = 0;
+  reconcileGridWithWatchlist();
+  // 캐시된 데이터로 즉시 채워 스켈레톤 대기를 없앤다(WS가 곧 최신값으로 갱신)
+  gridStockData.value = gridTickers.value.map((t) => (t && stockDataCache.value[t]) ? stockDataCache.value[t] : null);
+  subscribeToWebSocket();
+}
+
+// ── 그리드 카드 드래그앤드롭(위치 교환) ───────────────────────
+function onGridDragStart(idx, e) {
+  gridDraggingIdx.value = idx;
+  if (e && e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    // 일부 브라우저는 데이터가 있어야 드래그가 시작됨
+    try { e.dataTransfer.setData('text/plain', String(idx)); } catch (_) { /* ignore */ }
+  }
+}
+function onGridDragOver(idx) {
+  if (gridDraggingIdx.value === null || gridDraggingIdx.value === idx) return;
+  gridDragOverIdx.value = idx;
+}
+function onGridDragLeave(idx) {
+  if (gridDragOverIdx.value === idx) gridDragOverIdx.value = null;
+}
+function onGridDrop(idx) {
+  const from = gridDraggingIdx.value;
+  gridDragOverIdx.value = null;
+  gridDraggingIdx.value = null;
+  if (from === null || from === idx) return;
+  // 두 슬롯의 티커·타임프레임·데이터를 함께 교환(재요청 없이 위치만 스왑)
+  const swap = (arr) => { const a = [...arr.value]; [a[from], a[idx]] = [a[idx], a[from]]; arr.value = a; };
+  swap(gridTickers);
+  swap(gridTimeframes);
+  swap(gridStockData);
+  activeGridIndex.value = idx;
+}
+function onGridDragEnd() {
+  gridDraggingIdx.value = null;
+  gridDragOverIdx.value = null;
 }
 
 // ── 메서드 ────────────────────────────────────────────────────
@@ -553,24 +752,16 @@ async function fetchDashboard() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const prevSymbols = dbWatchlistSymbols.value.join(',');
+    const prevGrid = gridTickers.value.join(',');
     dashboardData.value = data;
     const nextSymbols = dbWatchlistSymbols.value.join(',');
 
-    // 초기 2×2 그리드 배치: 그리드가 전부 비어있을 때만 DB 관심종목 앞 4개 자동 배치
-    if (!gridInitialized.value) {
-      const isEmpty = gridTickers.value.every(t => t === '');
-      if (isEmpty && dbWatchlistSymbols.value.length > 0) {
-        const symbols = dbWatchlistSymbols.value.slice(0, 4);
-        symbols.forEach((sym, i) => {
-          gridTickers.value.splice(i, 1, sym);
-        });
-        subscribeToWebSocket();
-      }
-      gridInitialized.value = true;
-    }
+    // 그리드를 항상 DB 관심종목과 일치시킨다(관심종목에서 지운 종목은 그리드에서도 사라짐)
+    reconcileGridWithWatchlist();
+    gridInitialized.value = true;
 
-    // 관심종목 심볼이 바뀌면 WS 재구독
-    if (prevSymbols !== nextSymbols) {
+    // 관심종목 또는 그리드 구성이 바뀌면 WS 재구독
+    if (prevSymbols !== nextSymbols || prevGrid !== gridTickers.value.join(',')) {
       subscribeToWebSocket();
     }
 
@@ -601,8 +792,19 @@ function stopDashboardPoll() {
 
 // @select(ticker): 관심종목 클릭 → 활성 그리드 슬롯에 배치 (시계방향 순환)
 function handleUnifiedSelect(ticker) {
+  // 선택 종목이 현재 그리드 시장과 다르면, 그리드를 그 시장으로 스왑한 뒤 첫 칸에 배치
+  const wl = (dashboardData.value && Array.isArray(dashboardData.value.watchlist)) ? dashboardData.value.watchlist : [];
+  const found = wl.find(w => w.symbol === ticker);
+  if (found && found.market && found.market !== gridMarket.value) {
+    gridMarket.value = found.market;
+    gridTickers.value = Array(GRID_SIZE).fill('');
+    // 시장 전환 시에도 캐시로 즉시 채움
+    gridStockData.value = gridTickers.value.map((t) => (t && stockDataCache.value[t]) ? stockDataCache.value[t] : null);
+    activeGridIndex.value = 0;
+  }
   const targetIndex = activeGridIndex.value;
-  gridStockData.value.splice(targetIndex, 1, null);
+  // 선택 종목은 캐시가 있으면 즉시 표시(없으면 로딩)
+  gridStockData.value.splice(targetIndex, 1, stockDataCache.value[ticker] || null);
   gridTickers.value.splice(targetIndex, 1, ticker);
   gridTimeframes.value.splice(targetIndex, 1, '3m');
   subscribeToWebSocket();
@@ -611,8 +813,7 @@ function handleUnifiedSelect(ticker) {
   if (emptyIdx !== -1) {
     activeGridIndex.value = emptyIdx;
   } else {
-    const clockwiseMap = { 0: 1, 1: 3, 3: 2, 2: 0 };
-    activeGridIndex.value = clockwiseMap[targetIndex];
+    activeGridIndex.value = (targetIndex + 1) % GRID_SIZE;
   }
 }
 
@@ -621,6 +822,12 @@ function onWatchlistChanged() {
   fetchDashboard().then(() => {
     subscribeToWebSocket();
   });
+}
+
+// 사이드바 탭(국내/미국) 클릭 → 하단 차트 그리드도 연동 전환. '전체'는 차트 그대로 둔다.
+function onSidebarMarketChange(mode) {
+  if (mode === 'kr') setGridMarket('KR');
+  else if (mode === 'us') setGridMarket('US');
 }
 
 // ── WebSocket ─────────────────────────────────────────────────
@@ -665,11 +872,16 @@ function subscribeToWebSocket() {
   const cleanGridTickers = gridTickers.value.filter(t => typeof t === 'string' && t.trim() !== '');
   // DB 관심종목 심볼 (기존 localStorage watchlistTickers 대신)
   const cleanDbWatchlist = dbWatchlistSymbols.value;
+  // 보유종목 심볼: WS 구독에 포함해 실시간 가격(livePrices) 수신
+  const holdingSymbols = dashboardData.value && Array.isArray(dashboardData.value.holdings)
+    ? dashboardData.value.holdings.map(h => h.symbol).filter(s => typeof s === 'string' && s.trim() !== '')
+    : [];
 
   const tickersSet = new Set([
     ...cleanIndexTickers,
     ...cleanGridTickers,
     ...cleanDbWatchlist,
+    ...holdingSymbols,
     'USDKRW=X',
   ]);
   const tickers = Array.from(tickersSet);
@@ -685,6 +897,10 @@ function subscribeToWebSocket() {
   cleanDbWatchlist.forEach(t => {
     if (!timeframes[t]) timeframes[t] = '3m';
   });
+  // 보유종목은 기본 '3m' 타임프레임으로 구독 (Set 중복 제거로 이미 구독 중이면 영향 없음)
+  holdingSymbols.forEach(t => {
+    if (!timeframes[t]) timeframes[t] = '3m';
+  });
   timeframes['USDKRW=X'] = '1d';
 
   ws.value.send(JSON.stringify({ type: 'subscribe', tickers, timeframes }));
@@ -693,6 +909,16 @@ function subscribeToWebSocket() {
 function handleWebSocketUpdate(stocks) {
   if (loading.value) loading.value = false;
   error.value = false;
+
+  // 수신한 모든 종목 데이터를 티커별로 캐시 — 국내/미국 토글 시 캐시에서 즉시 채워
+  // 스켈레톤 대기 없이 바로 차트를 보여준다(WS가 곧 최신값으로 갱신).
+  Object.keys(stocks).forEach((t) => {
+    if (stocks[t]) {
+      const s = { ...stocks[t] };
+      s.name = getStockDisplayName(t, s.name);
+      stockDataCache.value[t] = s;
+    }
+  });
 
   // USD/KRW
   if (stocks['USDKRW=X'] && stocks['USDKRW=X'].current_price) {
@@ -738,6 +964,31 @@ function handleWebSocketUpdate(stocks) {
     }
   });
   watchlistDetailsMap.value = updatedMap;
+
+  // 보유종목 실시간 가격 맵(livePrices) 갱신
+  // - WS 키는 보통 심볼 그대로(예: "MU", "0167A0.KS") 이지만,
+  //   normalizeTicker() 로 정규화해 liveHoldings computed 의 키와 일치시킨다.
+  // - WS 메시지에 있는 모든 심볼을 순회: 보유 목록에 해당하는 심볼만 저장한다.
+  if (dashboardData.value && Array.isArray(dashboardData.value.holdings) && dashboardData.value.holdings.length > 0) {
+    // 보유 심볼의 정규화 키 집합 (빠른 룩업용)
+    const holdingKeySet = new Set(
+      dashboardData.value.holdings.map(h => normalizeTicker(h.symbol))
+    );
+    const updatedLivePrices = { ...livePrices.value };
+    let changed = false;
+    Object.keys(stocks).forEach(wsSymbol => {
+      const key = normalizeTicker(wsSymbol);
+      if (!holdingKeySet.has(key)) return; // 보유 종목이 아니면 건너뜀
+      const price = stocks[wsSymbol]?.current_price;
+      if (price !== null && price !== undefined && !isNaN(Number(price))) {
+        if (updatedLivePrices[key] !== Number(price)) {
+          updatedLivePrices[key] = Number(price);
+          changed = true;
+        }
+      }
+    });
+    if (changed) livePrices.value = updatedLivePrices;
+  }
 
   // flash 초기화 (단일 타이머로 추적 — 틱마다 중첩 생성 방지 + unmount 시 해제)
   if (_flashResetTimer) clearTimeout(_flashResetTimer);
@@ -794,9 +1045,8 @@ function indexQuoteColor(ticker) {
   const d = indexStockData.value[ticker];
   if (!d) return 'text-base-content';
   const up = (d.change_amount || 0) >= 0;
-  const korean = (ticker === 'KOSPI200' || ticker === 'KOSPI_NIGHT');
-  if (korean) return up ? 'text-rose-400' : 'text-sky-400';
-  return up ? 'text-emerald-400' : 'text-rose-400';
+  // 국내·미국 구분 없이 상승=빨강(rose-400), 하락=파랑(sky-400)으로 통일
+  return up ? 'text-rose-400' : 'text-sky-400';
 }
 
 function formatIndexValue(v) {
@@ -815,6 +1065,36 @@ function indexQuoteLabel(ticker) {
   return d.session === '거래중' ? '야간 거래중' : (d.session || '장마감');
 }
 
+// ── 보유 평단가 매핑 ──────────────────────────────────────────
+
+/**
+ * 티커 문자열을 비교용으로 정규화한다.
+ * 한국 종목: ".KS" / ".KQ" 접미사 제거 후 소문자 → 순수 코드만 남김
+ * 미국 종목: 대문자 통일
+ * 예) "0167A0.KS" → "0167a0", "MU" → "mu"
+ */
+function normalizeTicker(ticker) {
+  if (!ticker) return '';
+  return ticker.replace(/\.(KS|KQ)$/i, '').toLowerCase();
+}
+
+/**
+ * dashboardData.holdings 에서 ticker에 해당하는 보유 평단가를 반환.
+ * 보유 종목이 아니거나 평단가가 없으면 null 반환.
+ * 한국 종목의 .KS/.KQ 접미사 차이를 정규화해 비교.
+ */
+function getAveragePriceForTicker(ticker) {
+  if (!dashboardData.value || !Array.isArray(dashboardData.value.holdings)) return null;
+  if (!ticker) return null;
+  const normalized = normalizeTicker(ticker);
+  const holding = dashboardData.value.holdings.find(
+    h => normalizeTicker(h.symbol) === normalized
+  );
+  if (!holding) return null;
+  const avg = holding.average_price;
+  return (avg !== null && avg !== undefined && !isNaN(Number(avg))) ? Number(avg) : null;
+}
+
 // ── 개별 종목 ─────────────────────────────────────────────────
 
 function isStockKorean(ticker) {
@@ -829,10 +1109,18 @@ function formatStockValue(ticker, v) {
   return Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// 그리드 카드를 '종가 요약'으로 보여줄지 판단: 휴장일(거래일 아님) 또는 현재 세션이 장마감일 때.
+// 장 열려 있을 때(정규장/주간거래/프리/애프터/거래중)만 라이브 차트를 보여준다.
+function isGridClosed(idx) {
+  const d = gridStockData.value[idx];
+  if (!d) return false;
+  return d.is_trading_day === false || d.session === '장마감';
+}
+
 function quoteColorClass(ticker, changeAmount) {
   const up = (changeAmount || 0) >= 0;
-  if (isStockKorean(ticker)) return up ? 'text-rose-400' : 'text-sky-400';
-  return up ? 'text-emerald-400' : 'text-rose-400';
+  // 국내·미국 구분 없이 상승=빨강(rose-400), 하락=파랑(sky-400)으로 통일
+  return up ? 'text-rose-400' : 'text-sky-400';
 }
 
 function getStockDisplayName(ticker, backendName) {

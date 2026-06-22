@@ -131,9 +131,16 @@ class PriceService
 
         $result = [];
         foreach ($rows as $row) {
+            // regular_close: US 종목의 직전 정규장 종가.
+            // KR 종목 또는 아직 저장되지 않은 경우 null.
+            $regularClose = ($row->regular_close !== null && (float)$row->regular_close > 0)
+                ? (float)$row->regular_close
+                : null;
+
             $result[(int)$row->stock_id] = [
                 'stock_id'       => (int)$row->stock_id,
                 'price'          => (float)$row->price,
+                'regular_close'  => $regularClose,
                 'change_amount'  => (float)($row->change_amount ?? 0),
                 'change_percent' => (float)($row->change_percent ?? 0),
                 'recorded_at'    => $row->recorded_at ? $row->recorded_at->toDateTimeString() : null,
@@ -148,24 +155,40 @@ class PriceService
     /**
      * prices 테이블 upsert: (stock_id, session) 고유 키로 최신 1건 유지.
      *
-     * @param array{price:float,change_amount:float,change_percent:float,recorded_at:string} $quote
+     * regular_close: US 종목의 직전 정규장 종가(KIS output.base).
+     *   KisOverseasQuoteProvider 가 채워 반환하면 저장,
+     *   없으면(KR 종목 등) null 저장.
+     *
+     * @param array{
+     *   price:float,
+     *   regular_close?:float|null,
+     *   change_amount:float,
+     *   change_percent:float,
+     *   recorded_at:string
+     * } $quote
      */
     public function upsertPrice(int $stockId, string $session, array $quote): void
     {
         $now = Carbon::now();
+
+        // regular_close 는 선택 필드 — 없으면 null
+        $regularClose = isset($quote['regular_close']) && (float)$quote['regular_close'] > 0
+            ? $quote['regular_close']
+            : null;
 
         DB::table('prices')->upsert(
             [
                 'stock_id'       => $stockId,
                 'session'        => $session,
                 'price'          => $quote['price'],
+                'regular_close'  => $regularClose,
                 'change_amount'  => $quote['change_amount'],
                 'change_percent' => $quote['change_percent'],
                 'recorded_at'    => $quote['recorded_at'],
                 'updated_at'     => $now->toDateTimeString(),
             ],
             ['stock_id', 'session'],          // unique 키 컬럼
-            ['price', 'change_amount', 'change_percent', 'recorded_at', 'updated_at']  // 갱신 컬럼
+            ['price', 'regular_close', 'change_amount', 'change_percent', 'recorded_at', 'updated_at']  // 갱신 컬럼
         );
     }
 

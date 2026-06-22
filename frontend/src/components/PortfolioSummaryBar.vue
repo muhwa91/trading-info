@@ -3,8 +3,8 @@
 
     <!-- 환율 정보 -->
     <div :class="compact ? 'flex items-center gap-1.5 shrink-0' : 'flex items-center gap-2 shrink-0 sm:border-r sm:border-base-content/8 sm:pr-3'">
-      <span :class="compact ? 'text-xs font-bold font-mono text-base-content/50' : 'text-sm font-bold font-mono text-base-content/50'">
-        USD/KRW {{ exchangeRate ? Number(exchangeRate.USD_KRW).toFixed(2) : '—' }}
+      <span :class="compact ? 'text-xs font-bold font-mono text-white/80' : 'text-sm font-bold font-mono text-white/80'">
+        환율 {{ exchangeRate ? Number(exchangeRate.USD_KRW).toFixed(2) : '—' }}
       </span>
       <span v-if="exchangeRate && !compact" class="text-xs font-mono text-base-content/30">
         {{ fxSourceLabel }} · {{ formatRecordedAt(exchangeRate.recorded_at) }}
@@ -31,7 +31,7 @@
     >
       <span class="text-xs font-extrabold text-emerald-400/70 tracking-widest uppercase shrink-0">미국</span>
       <span :class="compact ? 'text-xs font-black font-mono text-white/80' : 'text-sm font-black font-mono text-white/80'">
-        ${{ usSummary.marketValueUSD.toFixed(2) }}
+        {{ usSummary.marketValueUSD.toFixed(2) }}$
       </span>
       <span
         :class="[compact ? 'text-xs font-black font-mono' : 'text-sm font-black font-mono', profitColorClass(usSummary.profitUSD, 'us')]"
