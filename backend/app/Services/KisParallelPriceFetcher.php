@@ -34,8 +34,18 @@ class KisParallelPriceFetcher
     /** 동시 HTTP 요청 최대 수 (KIS 레이트리밋 대비) */
     private const MAX_CONCURRENCY = 8;
 
-    /** KIS 현재가 캐시 TTL(초) — StockController 와 동일해야 함 */
-    private const PRICE_CACHE_TTL = 3;
+    /**
+     * KIS 현재가 캐시 TTL(초).
+     *
+     * 3초(WebSocket 사이클 주기)에서 8초로 늘려 매 사이클 캐시 만료를 방지한다.
+     * — WS 사이클은 3초마다 실행되므로 3초 TTL 이면 매 사이클 전 종목 캐시가 만료되어
+     *   항상 KIS 네트워크 왕복이 필요해진다.
+     * — 8초 TTL 이면 2~3 사이클에 걸쳐 캐시가 유효 → 사이클 대부분이 캐시 히트.
+     * — StockController(단건 API)에서 직접 Cache::remember(3, ...) 로 조회하는 경우는
+     *   그쪽 TTL 을 별도로 조정하므로 이 상수는 WebSocket 경로(KisParallelPriceFetcher)
+     *   전용이다.
+     */
+    private const PRICE_CACHE_TTL = 8;
 
     /**
      * 주어진 종목 목록의 KIS 현재가를 병렬 조회해 각각 캐시에 저장한다.
@@ -58,9 +68,8 @@ class KisParallelPriceFetcher
             return ['fetched' => 0, 'cached' => 0, 'failed' => 0];
         }
 
-        // 세션 판정 — 해외 종목의 주간거래(Blue Ocean) 여부를 결정한다.
+        // 세션 판정 — 해외 종목의 EXCD 그룹 선택에 사용한다.
         $session = $this->resolveUsSession();
-        $isOvernight = ($session === '주간거래');
 
         // 지수·환율 등 KIS 현재가 불필요 종목 제외
         $skipList = ['NQ=F', '^KS200', 'USDKRW=X', 'KOSPI_NIGHT', 'KOSPI200'];
@@ -119,7 +128,7 @@ class KisParallelPriceFetcher
             $result = $this->fetchOverseasBatch(
                 array_values($overseas),
                 $apiUrl, $appKey, $appSecret, $token,
-                $isOvernight
+                $session  // bool 대신 세션 문자열
             );
             $fetched += $result['fetched'];
             $failed  += $result['failed'];
@@ -144,7 +153,9 @@ class KisParallelPriceFetcher
         string $token
     ): array {
         $trId = (strpos($apiUrl, 'openapivts') !== false) ? 'VHPST01010000' : 'FHPST01010000';
-        $client = new Client(['timeout' => 5.0, 'connect_timeout' => 3.0]);
+        // timeout: 한 종목이 느려도 배치 전체가 stall 되지 않도록 하드 타임아웃을 촉박하게 설정.
+        // 2.5s > WS 사이클(3s) 의 80% — fetch 실패는 폴백 캐시로 graceful 처리된다.
+        $client = new Client(['timeout' => 2.5, 'connect_timeout' => 1.5]);
         $fetched = 0;
         $failed  = 0;
 
@@ -225,8 +236,8 @@ class KisParallelPriceFetcher
      * 해외 종목 현재가 병렬 조회.
      * KIS overseas-price (HHDFS00000300) — EXCD 캐시로 1차 적중률 극대화.
      *
-     * $isOvernight=true  → BAQ/BAY/BAA 우선 (주간거래)
-     * $isOvernight=false → NAS/NYS/AMS 우선 (정규장/프리/애프터)
+     * $session: '정규장'|'프리마켓'|'애프터마켓'|'주간거래'|'장마감'
+     * 정규장은 Blue Ocean(BAQ/BAY/BAA) 완전 제외 — stale 오염 원천 차단.
      */
     private function fetchOverseasBatch(
         array $tickers,
@@ -234,31 +245,62 @@ class KisParallelPriceFetcher
         string $appKey,
         string $appSecret,
         string $token,
-        bool $isOvernight
+        string $session       // '정규장'|'프리마켓'|'애프터마켓'|'주간거래'|'장마감'|'기타'
     ): array {
-        $client = new Client(['timeout' => 5.0, 'connect_timeout' => 3.0]);
+        // 국내와 동일하게 하드 타임아웃 — 해외 KIS 도 느린 경우 전체 배치를 stall 시키지 않음
+        $client = new Client(['timeout' => 2.5, 'connect_timeout' => 1.5]);
         $fetched = 0;
         $failed  = 0;
 
-        $sessionGroup  = $isOvernight ? 'overnight' : 'regular';
-        $primaryExcds  = $isOvernight ? ['BAQ', 'BAY', 'BAA'] : ['NAS', 'NYS', 'AMS'];
-        $fallbackExcds = $isOvernight ? ['NAS', 'NYS', 'AMS'] : ['BAQ', 'BAY', 'BAA'];
+        // 세션별 EXCD 선택 — 정규장에서 장외(Blue Ocean) stale 오염을 원천 차단
+        switch ($session) {
+            case '정규장':
+                // 정규장: Blue Ocean 완전 제외 (폴백도 없음 — stale 오염 원천 차단)
+                $sessionGroup  = '정규장';
+                $primaryExcds  = ['NAS', 'NYS', 'AMS'];
+                $fallbackExcds = [];
+                break;
+            case '프리마켓':
+                $sessionGroup  = '프리마켓';
+                $primaryExcds  = ['NAS', 'NYS', 'AMS'];
+                $fallbackExcds = ['BAQ', 'BAY', 'BAA'];
+                break;
+            case '애프터마켓':
+                $sessionGroup  = '애프터마켓';
+                $primaryExcds  = ['NAS', 'NYS', 'AMS'];
+                $fallbackExcds = ['BAQ', 'BAY', 'BAA'];
+                break;
+            case '주간거래':
+                $sessionGroup  = '주간거래';
+                $primaryExcds  = ['BAQ', 'BAY', 'BAA'];
+                $fallbackExcds = ['NAS', 'NYS', 'AMS'];
+                break;
+            default:
+                // 장마감·기타: 안전하게 NAS 우선, 폴백 없음 (전일종가는 무해)
+                $sessionGroup  = $session ?: '장마감';
+                $primaryExcds  = ['NAS', 'NYS', 'AMS'];
+                $fallbackExcds = [];
+                break;
+        }
+
+        $allowedExcds = array_merge($primaryExcds, $fallbackExcds);
 
         // 각 종목에 대해 "현재 시도할 EXCD 목록" 결정 (캐시 우선)
         $tickerExcds = [];
         foreach ($tickers as $ticker) {
             $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
             $cachedExcd   = Cache::get($excdCacheKey);
-            if ($cachedExcd !== null) {
+            // 이중 방어: 캐시된 EXCD 가 현재 세션 허용 목록에 없으면 무시 (정규장에서 BAQ 차단 등)
+            if ($cachedExcd !== null && in_array($cachedExcd, $allowedExcds, true)) {
                 $ordered = array_merge(
                     [$cachedExcd],
                     array_values(array_filter(
-                        array_merge($primaryExcds, $fallbackExcds),
+                        $allowedExcds,
                         fn($e) => $e !== $cachedExcd
                     ))
                 );
             } else {
-                $ordered = array_merge($primaryExcds, $fallbackExcds);
+                $ordered = $allowedExcds;
             }
             $tickerExcds[$ticker] = $ordered;
         }
@@ -570,8 +612,8 @@ class KisParallelPriceFetcher
     }
 
     /**
-     * 현재 미국 시장 세션을 간략 판정한다.
-     * ET 20:00~03:30 = 주간거래, 그 외 = regular/pre/after/closed.
+     * 현재 미국 시장 세션을 ET 기준 5가지로 판정한다.
+     * '정규장'|'프리마켓'|'애프터마켓'|'주간거래'|'장마감'
      * 상세 판정은 MarketSessionService 에 위임하지 않고 여기서 간단히 처리
      * (서비스 의존성 주입 없이도 WebSocketAgentServer 에서 사용 가능하도록).
      */
@@ -586,9 +628,19 @@ class KisParallelPriceFetcher
         if ($dayOfWeek === 7 && $timeVal < 2000) return '장마감';
         if ($dayOfWeek === 5 && $timeVal >= 2000) return '장마감';
 
-        // 주간거래(ET 20:00~03:30)
+        // 주간거래 (ET 20:00~03:30)
         if ($timeVal >= 2000 || $timeVal < 330) return '주간거래';
 
-        return '기타';
+        // 프리마켓 (ET 04:00~09:30)
+        if ($timeVal >= 400 && $timeVal < 930) return '프리마켓';
+
+        // 정규장 (ET 09:30~16:00)
+        if ($timeVal >= 930 && $timeVal < 1600) return '정규장';
+
+        // 애프터마켓 (ET 16:00~20:00)
+        if ($timeVal >= 1600 && $timeVal < 2000) return '애프터마켓';
+
+        // 03:30~04:00 사이 (주간거래 종료~프리마켓 시작)
+        return '장마감';
     }
 }

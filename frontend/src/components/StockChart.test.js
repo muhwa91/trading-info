@@ -170,3 +170,154 @@ describe('select change 이벤트 → changeTimeframe 연동', () => {
     }
   });
 });
+
+// ── updateLastCandleDirectly 로직 단위 테스트 ───────────────────────────────
+// StockChart.vue 의 updateLastCandleDirectly 핵심 연산을 독립 함수로 추출해 검증한다.
+// (lightweight-charts 인스턴스 없이 캔들 봉 계산 로직만 순수 검증)
+
+function computeCandleUpdate(lastCandle, price) {
+  const effectivePrice = (price !== null && price !== undefined) ? price : lastCandle.close;
+  let high = lastCandle.high;
+  let low = lastCandle.low;
+  if (effectivePrice > high) high = effectivePrice;
+  if (effectivePrice < low) low = effectivePrice;
+  return {
+    time: lastCandle.time,
+    open: lastCandle.open,
+    high,
+    low,
+    close: effectivePrice,
+  };
+}
+
+describe('updateLastCandleDirectly — 봉 갱신 연산', () => {
+  const baseCandle = { time: 1700000000, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
+
+  it('가격이 high 보다 높으면 high 를 갱신한다', () => {
+    const result = computeCandleUpdate(baseCandle, 115);
+    expect(result.high).toBe(115);
+    expect(result.close).toBe(115);
+    expect(result.low).toBe(90);
+    expect(result.open).toBe(100);
+  });
+
+  it('가격이 low 보다 낮으면 low 를 갱신한다', () => {
+    const result = computeCandleUpdate(baseCandle, 85);
+    expect(result.low).toBe(85);
+    expect(result.close).toBe(85);
+    expect(result.high).toBe(110);
+  });
+
+  it('가격이 high-low 범위 안이면 high·low 는 그대로 유지된다', () => {
+    const result = computeCandleUpdate(baseCandle, 103);
+    expect(result.high).toBe(110);
+    expect(result.low).toBe(90);
+    expect(result.close).toBe(103);
+  });
+
+  it('가격이 현재 close 와 동일해도 봉 데이터를 반환한다 (중복 틱 방어)', () => {
+    const result = computeCandleUpdate(baseCandle, 105);
+    expect(result.close).toBe(105);
+    expect(result.high).toBe(110);
+    expect(result.low).toBe(90);
+  });
+
+  it('price 가 null 이면 lastCandle.close 를 폴백으로 사용한다', () => {
+    const result = computeCandleUpdate(baseCandle, null);
+    expect(result.close).toBe(baseCandle.close);
+  });
+
+  it('price 가 undefined 이면 lastCandle.close 를 폴백으로 사용한다', () => {
+    const result = computeCandleUpdate(baseCandle, undefined);
+    expect(result.close).toBe(baseCandle.close);
+  });
+
+  it('time 과 open 은 항상 lastCandle 값을 유지한다', () => {
+    const result = computeCandleUpdate(baseCandle, 107);
+    expect(result.time).toBe(baseCandle.time);
+    expect(result.open).toBe(baseCandle.open);
+  });
+});
+
+// ── lastTrackedPrice 기반 동일값 중복 틱 방어 로직 ──────────────────────────
+// candles watch 에서 price === lastTrackedPrice 일 때 updateLastCandleDirectly 를
+// 재호출하는 분기를 독립적으로 검증한다.
+
+function makePriceTracker() {
+  let lastTrackedPrice = null;
+  const updateCalls = [];
+
+  function updateLastCandleDirectly(price) {
+    // 실제 차트 업데이트 대신 호출 기록
+    const effectivePrice = (price !== null && price !== undefined) ? price : null;
+    if (effectivePrice !== null) {
+      updateCalls.push(effectivePrice);
+      lastTrackedPrice = effectivePrice;
+    }
+  }
+
+  function onCandlesUpdate(currentPrice) {
+    // candles watch 에서 동일값 중복 틱 방어 분기
+    if (currentPrice !== null && currentPrice === lastTrackedPrice) {
+      updateLastCandleDirectly(currentPrice);
+    }
+  }
+
+  function onCurrentPriceChange(newPrice) {
+    // currentPrice watch 에서 봉 갱신
+    if (newPrice !== null) {
+      updateLastCandleDirectly(newPrice);
+    }
+  }
+
+  return {
+    onCandlesUpdate,
+    onCurrentPriceChange,
+    getUpdateCalls: () => updateCalls,
+    getLastTrackedPrice: () => lastTrackedPrice,
+    reset: () => { lastTrackedPrice = null; },
+  };
+}
+
+describe('동일값 중복 틱 방어 — candles watch 분기', () => {
+  it('currentPrice 가 처음 수신되면 lastTrackedPrice 에 기록된다', () => {
+    const tracker = makePriceTracker();
+    tracker.onCurrentPriceChange(100);
+    expect(tracker.getLastTrackedPrice()).toBe(100);
+    expect(tracker.getUpdateCalls()).toEqual([100]);
+  });
+
+  it('candles 갱신 시 currentPrice 가 lastTrackedPrice 와 같으면 재갱신한다', () => {
+    const tracker = makePriceTracker();
+    tracker.onCurrentPriceChange(100); // 첫 틱 → tracked = 100
+    tracker.onCandlesUpdate(100);       // candles 갱신 + price 동일 → 재갱신
+    expect(tracker.getUpdateCalls()).toEqual([100, 100]);
+  });
+
+  it('currentPrice 가 바뀌면 lastTrackedPrice 도 바뀐다', () => {
+    const tracker = makePriceTracker();
+    tracker.onCurrentPriceChange(100);
+    tracker.onCurrentPriceChange(102);
+    expect(tracker.getLastTrackedPrice()).toBe(102);
+  });
+
+  it('candles 갱신 시 currentPrice 가 lastTrackedPrice 와 다르면 재갱신하지 않는다', () => {
+    const tracker = makePriceTracker();
+    tracker.onCurrentPriceChange(100); // tracked = 100
+    tracker.onCandlesUpdate(102);       // price 다름 → Vue watch(currentPrice)가 처리할 것
+    expect(tracker.getUpdateCalls()).toEqual([100]); // 재갱신 없음
+  });
+
+  it('reset 후에는 lastTrackedPrice 가 null 이다 (종목·타임프레임 전환)', () => {
+    const tracker = makePriceTracker();
+    tracker.onCurrentPriceChange(100);
+    tracker.reset();
+    expect(tracker.getLastTrackedPrice()).toBeNull();
+  });
+
+  it('currentPrice 가 null 이면 candles watch 에서 재갱신하지 않는다', () => {
+    const tracker = makePriceTracker();
+    tracker.onCandlesUpdate(null);
+    expect(tracker.getUpdateCalls()).toHaveLength(0);
+  });
+});

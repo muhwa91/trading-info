@@ -259,53 +259,33 @@ class WebSocketAgentServer extends Command
         $cycleStart  = microtime(true);
         $tickerCount = count($uniquePairs);
 
-        // 3. ── KIS 현재가 병렬 선조회 ─────────────────────────────────────────
-        //    getStockData() 는 Cache::remember("kis_realtime_price_*", 3, ...) 로 캐시가 없을 때만
-        //    KIS HTTP 요청을 보낸다. KisParallelPriceFetcher 가 여기서 먼저 병렬로 모든 종목을
-        //    한꺼번에 KIS 에 요청해 캐시를 채워두면, 이후 getStockData() 들이 모두 캐시 히트가 된다.
-        //    → 순차 usleep 제거. 전체 사이클이 단일 요청 레이턴시(~500ms) 수준으로 단축된다.
-        $allTickers = array_unique(array_column(array_values($uniquePairs), 'ticker'));
+        // ── stale-while-revalidate 전략 ──────────────────────────────────────
+        //
+        // 최종 순서:
+        //   stale-restore(즉시) → 전송(Yahoo 네트워크 없음) → KIS 갱신 → Yahoo 갱신
+        //
+        // stale-restore 를 전송 앞에 두는 이유:
+        //   Yahoo 캔들 캐시(TTL=90초)가 만료됐을 때 _last 백업키에서 이전 값을
+        //   5초 TTL 로 임시 재주입해, 전송 루프가 캐시 히트를 보장받도록 한다.
+        //   네트워크가 전혀 없으므로 수 ms 이내 완료.
+        //
+        // Yahoo 갱신을 전송 후에 두는 이유:
+        //   전송은 stale 값(또는 살아있는 캐시)으로 즉시 완료.
+        //   Yahoo HTTP(5~6초)는 전송·KIS 후에 실행돼 이번 사이클 전송에 영향 없음.
+        //   _freshness 보조 키(TTL=90초)로 이미 갱신된 종목은 재호출 스킵.
+        //
+        // KIS 갱신을 전송 후에 두는 이유:
+        //   전송은 "마지막으로 캐시에 저장된 KIS 가격"으로 즉시 완료.
+        //   KIS fetch 가 느려도(최대 2.5초 하드 타임아웃) 이번 사이클 전송에 영향 없음.
+        //   TTL 8초 → 다음 2~3 사이클은 캐시 히트.
 
-        $kisStats = ['fetched' => 0, 'cached' => 0, 'failed' => 0];
+        // 3. ── stale-restore: Yahoo 캐시 만료 종목에 _last 백업 재주입 (즉시, 네트워크 없음) ──
+        $this->restoreStaleYahooCache($uniquePairs);
+        $staleRestoreElapsed = round((microtime(true) - $cycleStart) * 1000);
 
-        // ── KIS 현재가 + Yahoo 캔들 병렬 선조회를 동시에 시작 ─────────────────
-        //    두 작업은 서로 독립적이므로 fork-join 없이 순차 실행해도 되지만,
-        //    PHP 7.4 에서는 별도 스레드가 없으므로 KIS → Yahoo 순으로 직렬 병렬화한다.
-        //    (각 작업 내부는 Guzzle Pool 로 진정한 HTTP 병렬)
-        try {
-            $apiUrl    = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-            $appKey    = env('KIS_APP_KEY', '');
-            $appSecret = env('KIS_APP_SECRET', '');
-            $token     = Cache::get('kis_access_token', '');
-
-            if ($token !== '' && $appKey !== '' && $appKey !== 'your_app_key_here') {
-                $kisStats = $this->parallelFetcher->fetchAll(
-                    $allTickers,
-                    $apiUrl,
-                    $appKey,
-                    $appSecret,
-                    $token
-                );
-            }
-        } catch (\Exception $e) {
-            $this->error("[병렬선조회-KIS] 오류: " . $e->getMessage());
-        }
-
-        // ── Yahoo 캔들 병렬 워밍업 ────────────────────────────────────────────
-        //    getStockData() 내부에서 Cache::remember("yahoo_stock_data_*", 30, ...) 가 만료되면
-        //    순차 Yahoo HTTP 호출이 발생해 전송 단계에서 지연이 쌓인다.
-        //    캐시가 만료된 (ticker, timeframe) 쌍을 미리 감지해 StockController::getYahooChartData()
-        //    를 병렬(getStockData 내부 로직 재사용)로 채워두면 이 지연이 제거된다.
-        try {
-            $this->warmupYahooCandles($uniquePairs);
-        } catch (\Exception $e) {
-            $this->error("[Yahoo워밍업] 오류: " . $e->getMessage());
-        }
-
-        $preFetchElapsed = round((microtime(true) - $cycleStart) * 1000);
-
-        // 4. 캐시가 채워진 상태에서 각 종목 데이터를 구성해 구독 클라이언트에 즉시 전송
-        //    (getStockData 는 이제 거의 캐시 히트 → 네트워크 없음 → usleep 불필요)
+        // 4. ── 캐시 우선 즉시 전송 ─────────────────────────────────────────────
+        //    Yahoo 캐시가 살아있거나 stale-restore 로 재주입됐으므로 Yahoo 네트워크 없음.
+        //    KIS 캐시도 TTL 8초로 여전히 유효한 경우가 대부분 → 네트워크 없음.
         $sendStart = microtime(true);
 
         foreach ($uniquePairs as $key => $pair) {
@@ -315,6 +295,8 @@ class WebSocketAgentServer extends Command
             try {
                 $request = new Request();
                 $request->query->set('timeframe', $tf);
+                // WS 전송 경로: stale 캐시 허용(동기 KIS fetch 금지 → 케이던스 40~50ms 유지)
+                $request->attributes->set('ws_allow_stale', true);
 
                 $response = $this->controller->getStockData($request, $ticker);
                 $data     = json_decode($response->getContent(), true);
@@ -337,25 +319,63 @@ class WebSocketAgentServer extends Command
                         @fwrite($socket, $this->encode($payload));
                     }
                 }
-                // ★ usleep 완전 제거 — 레이트리밋은 KisParallelPriceFetcher 의 동시성 상한(8)이 담당
             } catch (\Exception $e) {
                 $this->error("종목 데이터 처리 실패 [{$key}]: " . $e->getMessage());
             }
         }
 
-        $sendElapsed  = round((microtime(true) - $sendStart) * 1000);
+        $sendElapsed = round((microtime(true) - $sendStart) * 1000);
+
+        // 5. ── 전송 후 KIS 현재가 갱신 ──────────────────────────────────────────
+        //    전송 완료 후 KIS 를 병렬 조회해 캐시를 갱신한다.
+        //    → 다음 사이클(3초 후) 전송 시 최신 가격이 반영된다.
+        //    → 이 fetch 가 타임아웃(2.5초)으로 실패해도 TTL 8초 내 기존 캐시가 유효.
+        $allTickers = array_unique(array_column(array_values($uniquePairs), 'ticker'));
+        $kisStats   = ['fetched' => 0, 'cached' => 0, 'failed' => 0];
+
+        try {
+            $apiUrl    = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
+            $appKey    = env('KIS_APP_KEY', '');
+            $appSecret = env('KIS_APP_SECRET', '');
+            $token     = Cache::get('kis_access_token', '');
+
+            if ($token !== '' && $appKey !== '' && $appKey !== 'your_app_key_here') {
+                $kisStats = $this->parallelFetcher->fetchAll(
+                    $allTickers,
+                    $apiUrl,
+                    $appKey,
+                    $appSecret,
+                    $token
+                );
+            }
+        } catch (\Exception $e) {
+            $this->error("[KIS갱신] 오류: " . $e->getMessage());
+        }
+
+        $kisElapsed = round((microtime(true) - $sendStart) * 1000) - $sendElapsed;
+
+        // 6. ── Yahoo 캔들 갱신 (전송+KIS 후, _last 백업 저장) ──────────────────
+        //    _freshness 보조키(90초)가 살아있으면 스킵, 만료 종목만 Yahoo HTTP 호출.
+        //    완료 후 결과를 Cache::forever("{$cacheKey}_last") 에 저장해 다음 stale-restore 에 활용.
+        $yahooRefreshStart = microtime(true);
+        try {
+            $this->refreshYahooCache($uniquePairs);
+        } catch (\Exception $e) {
+            $this->error("[Yahoo갱신] 오류: " . $e->getMessage());
+        }
+        $yahooRefreshElapsed = round((microtime(true) - $yahooRefreshStart) * 1000);
+
         $totalElapsed = round((microtime(true) - $cycleStart) * 1000);
 
         $this->info(
             sprintf(
-                "[사이클] 종목 %d개 완료 — 합계 %dms (병렬선조회 %dms: 신규%d건·캐시%d건·실패%d건 / 전송 %dms)",
+                "[사이클] 종목 %d개 — stale복원 %dms / 전송 %dms / KIS %dms / Yahoo갱신 %dms / 합계 %dms",
                 $tickerCount,
-                $totalElapsed,
-                $preFetchElapsed,
-                $kisStats['fetched'],
-                $kisStats['cached'],
-                $kisStats['failed'],
-                $sendElapsed
+                $staleRestoreElapsed,
+                $sendElapsed,
+                $kisElapsed,
+                $yahooRefreshElapsed,
+                $totalElapsed
             )
         );
     }
@@ -397,6 +417,8 @@ class WebSocketAgentServer extends Command
             try {
                 $request = new Request();
                 $request->query->set('timeframe', $tf);
+                // WS 전송 경로: stale 캐시 허용(동기 KIS fetch 금지 → 케이던스 유지)
+                $request->attributes->set('ws_allow_stale', true);
 
                 $response = $this->controller->getStockData($request, $ticker);
                 $data     = json_decode($response->getContent(), true);
@@ -483,33 +505,23 @@ class WebSocketAgentServer extends Command
     }
 
     /**
-     * Yahoo 캔들 캐시가 만료된 종목을 getStockData() 를 통해 미리 채운다.
-     *
-     * KIS 현재가는 이미 병렬선조회(fetchAll)로 캐시에 채워진 상태이므로,
-     * getStockData() 내부에서 Yahoo HTTP 호출만 발생한다.
-     *
-     * PHP 7.4 단일 스레드 한계상 Yahoo 조회는 순차이지만:
-     *   - 캐시 만료는 30초 주기이므로 전체 사이클 중 ~10% 만 해당
-     *   - 만료 시에도 종목당 ~300~500ms → 16개 순차 최대 ~8초 → 하지만
-     *     캐시가 만료되는 종목은 동시에 만료되지 않고 분산돼 보통 1~3개
-     *   - 이미 KIS 병렬화로 "캐시 유효 구간" 사이클이 ~280ms 로 단축됐으므로,
-     *     Yahoo 만료 이상치는 빈도 낮은 예외 상황으로 수용 가능
+     * @deprecated stale-while-revalidate 패턴으로 대체됨 (2026-06-22).
+     *             restoreStaleYahooCache() + refreshYahooCache() 를 사용하라.
+     *             이 메서드는 전송 전 Yahoo HTTP 를 블로킹 호출해 사이클을 stall 시킨다.
      *
      * @param array<string, array{ticker:string, timeframe:string}> $uniquePairs
      */
     private function warmupYahooCandles(array $uniquePairs): void
     {
-        $indexList = ['NQ=F', '^KS200', 'USDKRW=X', 'KOSPI_NIGHT', 'KOSPI200'];
-
+        // deprecated: pushRealtimeData() 에서 더 이상 호출하지 않는다.
+        // 아래 로직은 참조용으로 보존하며 삭제하지 않는다.
         foreach ($uniquePairs as $pair) {
-            $ticker  = $pair['ticker'];
-            $tf      = $pair['timeframe'];
+            $ticker = $pair['ticker'];
+            $tf     = $pair['timeframe'];
 
-            // StockController 와 동일한 캐시 키 결정
             if ($ticker === 'KOSPI200') {
                 $cacheKey = "kis_kospi_index_{$tf}";
             } elseif ($ticker === 'KOSPI_NIGHT') {
-                // KOSPI_NIGHT 는 kospi_night_data_{tf} 키 사용
                 $cacheKey = "kospi_night_data_{$tf}";
             } elseif (in_array($ticker, ['NQ=F', '^KS200', 'USDKRW=X'], true)) {
                 $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}";
@@ -518,17 +530,115 @@ class WebSocketAgentServer extends Command
             }
 
             if (Cache::has($cacheKey)) {
-                continue; // 캐시 유효 → 건너뜀
+                continue;
             }
 
             try {
                 $request = new Request();
                 $request->query->set('timeframe', $tf);
-                // getStockData 가 내부에서 Yahoo 캔들을 조회하고 캐시에 저장한다.
-                // KIS 현재가는 이미 병렬선조회로 채워져 있어 추가 네트워크 비용 없음.
                 $this->controller->getStockData($request, $ticker);
             } catch (\Exception $e) {
-                // 무시 — 전송 단계에서 getMockStockData 폴백으로 처리
+                // 무시
+            }
+        }
+    }
+
+    /**
+     * stale-while-revalidate: 전송 직전 호출.
+     *
+     * Yahoo 캔들 캐시키가 만료된 종목에 대해 {key}_last 백업값을
+     * 5초 TTL 로 원본 캐시키에 재주입한다.
+     * 이후 전송 루프의 getStockData() → Cache::remember() 가 이 재주입값을 히트해
+     * Yahoo HTTP 를 호출하지 않는다.
+     *
+     * - _last 도 없는 경우(cold-start): 아무것도 하지 않는다.
+     *   → refreshYahooCache() 가 전송 후 Yahoo HTTP 로 채운다.
+     * - 네트워크 호출 없음, 수 ms 이내 완료.
+     *
+     * @param array<string, array{ticker:string, timeframe:string}> $uniquePairs
+     */
+    private function restoreStaleYahooCache(array $uniquePairs): void
+    {
+        foreach ($uniquePairs as $pair) {
+            $ticker = $pair['ticker'];
+            $tf     = $pair['timeframe'];
+
+            if ($ticker === 'KOSPI200') {
+                $cacheKey = "kis_kospi_index_{$tf}";
+            } elseif ($ticker === 'KOSPI_NIGHT') {
+                $cacheKey = "kospi_night_data_{$tf}";
+            } elseif (in_array($ticker, ['NQ=F', '^KS200', 'USDKRW=X'], true)) {
+                $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}";
+            } else {
+                $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}_raw";
+            }
+
+            // 원본 캐시가 살아있으면 복원 불필요
+            if (Cache::has($cacheKey)) {
+                continue;
+            }
+
+            // _last 백업이 있으면 5초 TTL 로 단기 재주입 — 전송이 캐시 히트로 사용
+            $lastVal = Cache::get("{$cacheKey}_last");
+            if ($lastVal !== null) {
+                Cache::put($cacheKey, $lastVal, 5);
+            }
+            // _last 도 없으면 cold-start → refreshYahooCache() 가 처리
+        }
+    }
+
+    /**
+     * stale-while-revalidate: 전송+KIS 후 호출.
+     *
+     * _freshness 보조키(TTL=90초)가 만료된 종목에 대해 Yahoo HTTP 를 실행한다.
+     * 성공 시:
+     *   - getStockData() 내부 Cache::remember($cacheKey, 90, ...) 가 원본 캐시를 채운다.
+     *   - Cache::forever("{$cacheKey}_last") 에 동일 값을 영구 저장(다음 stale-restore 용).
+     *   - Cache::put("{$cacheKey}_freshness", 1, 90) 으로 신선도 마커를 세운다.
+     *
+     * _freshness 가 살아있는 종목(90초 이내 갱신)은 스킵 → 중복 호출 방지.
+     * 5초 재주입으로 원본 캐시가 살아있어도, _freshness 없으면 갱신 대상으로 처리.
+     *
+     * @param array<string, array{ticker:string, timeframe:string}> $uniquePairs
+     */
+    private function refreshYahooCache(array $uniquePairs): void
+    {
+        foreach ($uniquePairs as $pair) {
+            $ticker = $pair['ticker'];
+            $tf     = $pair['timeframe'];
+
+            if ($ticker === 'KOSPI200') {
+                $cacheKey = "kis_kospi_index_{$tf}";
+            } elseif ($ticker === 'KOSPI_NIGHT') {
+                $cacheKey = "kospi_night_data_{$tf}";
+            } elseif (in_array($ticker, ['NQ=F', '^KS200', 'USDKRW=X'], true)) {
+                $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}";
+            } else {
+                $cacheKey = "yahoo_stock_data_{$ticker}_{$tf}_raw";
+            }
+
+            // _freshness 마커가 살아있으면 90초 이내 갱신됨 → 스킵
+            $freshnessKey = "{$cacheKey}_freshness";
+            if (Cache::has($freshnessKey)) {
+                continue;
+            }
+
+            // 90초 만료 or cold-start → Yahoo HTTP fetch
+            try {
+                $request = new Request();
+                $request->query->set('timeframe', $tf);
+                // getStockData() 내부의 Cache::remember($cacheKey, 90, ...) 가
+                // 원본 캐시를 채운다(5초 재주입 값은 이미 expire됐거나 덮어씌워진다).
+                $this->controller->getStockData($request, $ticker);
+
+                // getStockData() 호출 후 원본 캐시에 저장된 값을 _last 에 영구 백업
+                $cachedVal = Cache::get($cacheKey);
+                if ($cachedVal !== null) {
+                    Cache::forever("{$cacheKey}_last", $cachedVal);
+                    Cache::put($freshnessKey, 1, 90);
+                }
+            } catch (\Exception $e) {
+                $this->error("[Yahoo갱신] [{$ticker} {$tf}] " . $e->getMessage());
             }
         }
     }

@@ -124,6 +124,10 @@ class StockController extends Controller
         $ticker = str_replace('0167AO', '0167A0', $ticker);
         $timeframe = strtolower($request->query('timeframe', '1d'));
 
+        // WS 전송 경로는 stale 캐시 허용(케이던스 유지 목적).
+        // REST 직접조회 경로는 허용하지 않아 만료 시 동기 fetch 로 갱신한다.
+        $allowStale = (bool) $request->attributes->get('ws_allow_stale', false);
+
         // 코스피 지수(KOSPI200) — KIS 국내업종 API 사용 (값 일관성)
         if ($ticker === 'KOSPI200') {
             // 코스피 지수 캔들은 분봉도 KIS 분봉 집계로 구성 → 90초 캐싱. 현재가는 KIS 현재가 캐시(3초) 별도.
@@ -205,11 +209,32 @@ class StockController extends Controller
                 return $this->getYahooChartData($yahooSymbol, $timeframe, !$isDaily);
             });
 
-            // KIS 현재가는 3초 캐싱 유지 — 실시간 가격·등락 갱신의 핵심이므로 짧게 유지
-            $cacheKeyKis = "kis_realtime_price_{$ticker}";
-            $kisPrice = Cache::remember($cacheKeyKis, 3, function() use ($ticker) {
-                return $this->fetchDomesticPriceFromKis($ticker);
-            });
+            // KIS 현재가(국내) — WS/REST 경로 분기:
+            //   WS ($allowStale=true):
+            //     1) primary 캐시 히트(병렬선조회 8초 TTL) → 즉시 반환
+            //     2) 미스 → 폴백(24h) 반환, 동기 fetch 금지(케이던스 유지)
+            //   REST ($allowStale=false):
+            //     1) primary 캐시 히트 → 즉시 반환
+            //     2) 미스 → 동기 fetch 로 갱신 후 primary(8초)에 저장
+            //     3) fetch 실패 → 폴백(24h) 반환
+            $cacheKeyKis     = "kis_realtime_price_{$ticker}";
+            $fallbackKeyKis  = "kis_last_successful_price_{$ticker}";
+            $kisPrice = Cache::get($cacheKeyKis);
+            if ($kisPrice === null) {
+                if ($allowStale) {
+                    // WS 경로: 동기 fetch 없이 폴백 사용
+                    $kisPrice = Cache::get($fallbackKeyKis);
+                } else {
+                    // REST 경로: 동기 fetch 로 갱신(라운드3 이전 동작 복원)
+                    $fresh = $this->fetchDomesticPriceFromKis($ticker);
+                    if ($fresh !== null) {
+                        Cache::put($cacheKeyKis, $fresh, 8);
+                        $kisPrice = $fresh;
+                    } else {
+                        $kisPrice = Cache::get($fallbackKeyKis);
+                    }
+                }
+            }
 
             $session = $this->getKrMarketSessionInfo(time());
 
@@ -293,11 +318,32 @@ class StockController extends Controller
             return $this->getYahooChartData($ticker, $timeframe, !$isDaily);
         });
 
-        // KIS 현재가는 3초 캐싱 유지 — 실시간 가격·등락 갱신의 핵심
-        $cacheKeyKis = "kis_realtime_price_us_{$ticker}";
-        $kisPrice = Cache::remember($cacheKeyKis, 3, function() use ($ticker) {
-            return $this->fetchOverseasPriceFromKis($ticker);
-        });
+        // KIS 현재가(미국) — WS/REST 경로 분기:
+        //   WS ($allowStale=true):
+        //     1) primary 캐시 히트(병렬선조회 8초 TTL) → 즉시 반환
+        //     2) 미스 → 폴백(24h) 반환, 동기 fetch 금지(케이던스 유지)
+        //   REST ($allowStale=false):
+        //     1) primary 캐시 히트 → 즉시 반환
+        //     2) 미스 → 동기 fetch 로 갱신 후 primary(8초)에 저장
+        //     3) fetch 실패 → 폴백(24h) 반환
+        $cacheKeyKis       = "kis_realtime_price_us_{$ticker}";
+        $fallbackKeyKisUs  = "kis_last_successful_overseas_price_{$ticker}";
+        $kisPrice = Cache::get($cacheKeyKis);
+        if ($kisPrice === null) {
+            if ($allowStale) {
+                // WS 경로: 동기 fetch 없이 폴백 사용
+                $kisPrice = Cache::get($fallbackKeyKisUs);
+            } else {
+                // REST 경로: 동기 fetch 로 갱신(라운드3 이전 동작 복원)
+                $fresh = $this->fetchOverseasPriceFromKis($ticker);
+                if ($fresh !== null) {
+                    Cache::put($cacheKeyKis, $fresh, 8);
+                    $kisPrice = $fresh;
+                } else {
+                    $kisPrice = Cache::get($fallbackKeyKisUs);
+                }
+            }
+        }
 
         $session = $this->getUsMarketSessionInfo(time());
 
@@ -313,9 +359,18 @@ class StockController extends Controller
                     $lastYahooTime = (int)end($content['candles'])['time'];
                     $accumulated1m = $this->accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime);
 
+                    // Yahoo 마지막 봉 시각은 초 단위로 비정렬일 수 있다(예: 10:47:09).
+                    // 실시간 누적 봉은 분 정렬(예: 10:47:00)이라, 단순히 '> lastYahooTime' 로
+                    // 거르면 같은 분의 실시간 봉(:00)이 비정렬 Yahoo 시각(:09)보다 작아 버려진다.
+                    // 그러면 그 분 동안 현재가는 움직이는데 차트 마지막 봉은 Yahoo 값에 고정돼
+                    // 헤더 현재가 ≠ 봉 close 로 갈리고 봉이 멈칫한다.
+                    // → Yahoo 시각을 분 단위로 내림 정렬해 같은 분의 실시간 봉을 보존한다.
+                    //   (aggregateCandles 가 동일 버킷을 병합하고 close 는 뒤에 오는 누적값이 이긴다.)
+                    $alignedLastYahooTime = $lastYahooTime - ($lastYahooTime % 60);
+
                     // Filter accumulated candles
-                    $filteredAccumulated = array_filter($accumulated1m, function($c) use ($lastYahooTime) {
-                        return (int)$c['time'] > $lastYahooTime;
+                    $filteredAccumulated = array_filter($accumulated1m, function($c) use ($alignedLastYahooTime) {
+                        return (int)$c['time'] >= $alignedLastYahooTime;
                     });
 
                     // Merge!
@@ -673,14 +728,26 @@ class StockController extends Controller
         elseif ($timeframe === '30m') $nmin = '30';
         elseif ($timeframe === '1h') $nmin = '60';
 
-        // 주간거래 시간대에는 Blue Ocean 코드 우선 시도
+        // 세션 판정 후 시도 순서 결정 — 현재가 조회(fetchOverseasPriceFromKis)와 동일한 4그룹 세분화
+        // 분봉용 EXCD 캐시는 현재가 캐시와 키를 공유하므로, 세션 그룹도 동일하게 맞춰야 한다.
         $session = $this->getUsMarketSessionInfo(time());
-        $sessionGroup = ($session === '주간거래') ? 'overnight' : 'regular';
 
-        if ($session === '주간거래') {
+        if ($session === '정규장') {
+            $sessionGroup = '정규장';
+            // 정규장: BAQ/BAY/BAA 완전 제외 — 장외 stale 값 오염 방지
+            $allExchanges = ['NAS', 'NYS', 'AMS'];
+        } elseif ($session === '프리마켓') {
+            $sessionGroup = '프리마켓';
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        } elseif ($session === '애프터마켓') {
+            $sessionGroup = '애프터마켓';
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        } elseif ($session === '주간거래') {
+            $sessionGroup = '주간거래';
             $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
         } else {
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+            $sessionGroup = 'unknown';
+            $allExchanges = ['NAS', 'NYS', 'AMS'];
         }
 
         // 분봉용 EXCD 캐시 — 현재가와 동일한 종목별·세션그룹별 캐시를 재사용
@@ -1996,21 +2063,40 @@ class StockController extends Controller
 
         $lastSuccessKey = "kis_last_successful_overseas_price_{$ticker}";
 
-        // 세션 판정 후 시도 순서 결정 — 주간거래/정규장별 EXCD 우선순위가 다르다
+        // 세션 판정 후 시도 순서 결정 — 세션별 EXCD 우선순위가 다르다
         $session = $this->getUsMarketSessionInfo(time());
-        $sessionGroup = ($session === '주간거래') ? 'overnight' : 'regular';
 
-        if ($session === '주간거래') {
+        // 세션 그룹: 4그룹으로 분리 (이전 이진 regular/overnight → 세션별 분리)
+        // 이전: 프리/애프터/정규 = "regular" 동일 그룹 → BAQ가 "regular" 에 캐싱돼 정규장을 오염
+        // 수정: 세션마다 별도 캐시 키 → 프리마켓 BAQ 캐시가 정규장에 히트하지 않음
+        if ($session === '정규장') {
+            $sessionGroup = '정규장';
+            // 정규장: BAQ/BAY/BAA(Blue Ocean) 완전 제외 — stale 장외값 오염 방지
+            $allExchanges = ['NAS', 'NYS', 'AMS'];
+        } elseif ($session === '프리마켓') {
+            $sessionGroup = '프리마켓';
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        } elseif ($session === '애프터마켓') {
+            $sessionGroup = '애프터마켓';
+            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+        } elseif ($session === '주간거래') {
+            $sessionGroup = '주간거래';
             $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
         } else {
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
+            // 장마감·unknown: 안전하게 정규장 코드만
+            $sessionGroup = 'unknown';
+            $allExchanges = ['NAS', 'NYS', 'AMS'];
         }
 
-        // 종목별·세션그룹별로 이전에 성공한 EXCD 캐시 조회
+        // 종목별·세션별로 이전에 성공한 EXCD 캐시 조회
         // → 히트 시 해당 거래소를 맨 앞으로 배치해 1~2회 만에 조회 완료
+        // → 세션별로 분리됐으므로 프리마켓 BAQ 캐시가 정규장에 절대 히트하지 않음
         $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
         $cachedExcd = Cache::get($excdCacheKey);
-        if ($cachedExcd !== null) {
+        // 캐시된 EXCD 가 현재 세션 허용 목록에 있을 때만 맨 앞으로 prepend 한다.
+        // (이중 방어: 정규장에 혹시 BAQ 같은 비허용 EXCD 가 캐시돼 있어도 절대 1순위가 되지 않음
+        //  — KisParallelPriceFetcher 와 동일한 안전장치로 두 구현을 일관되게 맞춘다.)
+        if ($cachedExcd !== null && in_array($cachedExcd, $allExchanges, true)) {
             // 성공 거래소를 맨 앞에 두되, 나머지 폴백도 그대로 유지
             $exchanges = array_merge(
                 [$cachedExcd],

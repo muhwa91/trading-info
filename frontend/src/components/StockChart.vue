@@ -285,6 +285,9 @@ const shouldFitContent = ref(true);
 const priceCoordinate = ref(null);
 const hasRenderedData = ref(false);
 const lastCandlesCount = ref(0);
+// 직전 currentPrice 를 컴포넌트가 직접 추적: Vue watch 는 동일값이면 트리거하지 않아
+// WS 가 같은 가격을 중복 수신하면 봉 갱신이 멈춰 보이는 엣지케이스를 방어한다.
+const lastTrackedPrice = ref(null);
 const isIndex = ref(
   props.ticker === 'NQ=F' || props.ticker === 'KOSPI_NIGHT' || props.ticker === 'KOSPI200'
 );
@@ -610,6 +613,7 @@ function changeTimeframe(value) {
   if (selectedTimeframe.value === value) return;
   selectedTimeframe.value = value;
   shouldFitContent.value = true;
+  lastTrackedPrice.value = null; // 타임프레임 전환 시 추적 가격 초기화
   emit('timeframe-change', value);
 }
 
@@ -762,14 +766,18 @@ function updateLastCandleDirectly(price) {
   const lastCandle = props.candles[props.candles.length - 1];
   if (!lastCandle) return;
 
+  // 차트에 반영할 가격: 인자로 받은 price 가 null/undefined 이면 마지막 봉 close 로 폴백.
+  // 이 함수는 항상 유효한 가격으로 호출되어야 하지만, 방어 코드로 처리.
+  const effectivePrice = (price !== null && price !== undefined) ? price : lastCandle.close;
+
   const time = lastCandle.time;
   const open = lastCandle.open;
   let high = lastCandle.high;
   let low = lastCandle.low;
-  const close = price;
+  const close = effectivePrice;
 
-  if (price > high) high = price;
-  if (price < low) low = price;
+  if (effectivePrice > high) high = effectivePrice;
+  if (effectivePrice < low) low = effectivePrice;
 
   candlestickSeries.value.update({
     time,
@@ -788,6 +796,8 @@ function updateLastCandleDirectly(price) {
       color: close >= open ? upVolColor : downVolColor
     });
   }
+
+  lastTrackedPrice.value = effectivePrice;
 }
 
 function formatNumber(value) {
@@ -831,6 +841,7 @@ watch(
     shouldFitContent.value = true;
     hasRenderedData.value = false;
     lastCandlesCount.value = 0;
+    lastTrackedPrice.value = null; // 종목 전환 시 추적 가격 초기화
     isIndex.value = props.ticker === 'NQ=F' || props.ticker === 'KOSPI_NIGHT' || props.ticker === 'KOSPI200';
     loadAvgPrice();
     loadEarningsDate();
@@ -877,6 +888,21 @@ watch(
   () => props.candles,
   (newCandles) => {
     updateChartData(newCandles);
+
+    // ── 동일값 중복 틱 방어 (WS stall 엣지케이스) ───────────────────────
+    // Vue watch(currentPrice) 는 newPrice === oldPrice 이면 fire 하지 않는다.
+    // WS 케이던스가 불안정해 candles 만 새로 오고 currentPrice 가 이전과 같은 값이면
+    // 차트 마지막 봉이 currentPrice 로 보정되지 않아 "멈춘 것처럼" 보이는 증상이 생긴다.
+    // candles 갱신 후 추적 중인 가격과 현재 props.currentPrice 가 같으면 여기서 재적용한다.
+    // (가짜 데이터 없음 — 이미 알고 있는 실제 수신 가격을 재적용하는 것이므로 안전)
+    const price = props.currentPrice;
+    if (price !== null && candlestickSeries.value && chart.value && hasRenderedData.value
+        && price === lastTrackedPrice.value) {
+      // updateChartData 의 chartCandles[lastIdx].close = props.currentPrice 경로가 있지만
+      // full setData 가 아닌 증분 경로에서는 currentPrice 가 봉에 반영되지 않을 수 있으므로
+      // 명시적으로 재갱신한다.
+      updateLastCandleDirectly(price);
+    }
   },
   { deep: true }
 );
@@ -896,7 +922,9 @@ watch(
       }, 800);
     }
 
-    // 실시간으로 수신된 주가 틱을 차트 마지막 캔들에 즉시 강제 갱신 및 동기화 처리
+    // 실시간으로 수신된 주가 틱을 차트 마지막 캔들에 즉시 강제 갱신 및 동기화 처리.
+    // newPrice === oldPrice 이면 Vue watch 가 여기를 호출하지 않으므로,
+    // 동일 가격 중복 틱은 위 candles watch 에서 lastTrackedPrice 비교로 보정한다.
     if (newPrice !== null && candlestickSeries.value && chart.value) {
       updateLastCandleDirectly(newPrice);
     }
