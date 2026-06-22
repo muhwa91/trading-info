@@ -71,21 +71,23 @@
 
     <!-- 보유 종목 테이블 -->
     <div v-else v-show="!holdingsCollapsed" class="overflow-x-auto custom-scrollbar">
-      <table class="w-full min-w-240" role="table" aria-label="보유 종목 목록">
+      <table class="w-full min-w-215" role="table" aria-label="보유 종목 목록">
         <thead>
           <tr class="text-xs font-extrabold text-base-content/35 tracking-wider uppercase border-b border-base-content/6">
             <!-- 드래그 핸들 열 -->
-            <th class="w-8 px-2 py-3"></th>
-            <th class="text-left px-4 md:px-5 py-3 font-extrabold">종목</th>
-            <!-- 세션 배지 열 헤더 (빈 헤더, 수량 앞) -->
-            <th class="px-1 py-3 w-20"></th>
-            <th class="text-right px-3 py-3 font-extrabold">수량</th>
-            <th class="text-right px-3 py-3 font-extrabold">평단가</th>
-            <th class="text-right px-3 py-3 font-extrabold">현재가</th>
-            <th class="text-right px-3 py-3 font-extrabold">미실현손익</th>
-            <th class="text-right px-3 py-3 font-extrabold">손익률</th>
-            <th class="text-right px-3 py-3 font-extrabold">평가금액</th>
-            <th class="text-center px-4 md:px-5 py-3 font-extrabold">관리</th>
+            <th class="w-8 px-2 py-3 whitespace-nowrap"></th>
+            <th class="text-left px-4 md:px-5 py-3 font-extrabold whitespace-nowrap">종목</th>
+            <!-- 세션 배지 열 헤더 (빈 헤더) -->
+            <th class="px-1 py-3 w-20 whitespace-nowrap"></th>
+            <!-- 국가 열 헤더 -->
+            <th class="text-center px-3 py-3 font-extrabold whitespace-nowrap">국가</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">수량</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">평단가</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">현재가</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">미실현손익</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">손익률</th>
+            <th class="text-right px-3 py-3 font-extrabold whitespace-nowrap">평가금액</th>
+            <th class="text-center px-4 md:px-5 py-3 font-extrabold whitespace-nowrap">관리</th>
           </tr>
         </thead>
         <tbody>
@@ -116,25 +118,17 @@
               <span class="text-base-content/20 hover:text-base-content/50 cursor-grab active:cursor-grabbing select-none text-base leading-none">⠿</span>
             </td>
 
-            <!-- 종목명·심볼·마켓 -->
-            <td class="px-4 md:px-5 py-3.5">
-              <div class="flex flex-col gap-0.5">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <span class="text-sm font-black text-white leading-tight">{{ displayName(item) }}</span>
-                  <span class="px-1.5 py-0.5 rounded text-xs font-bold font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 leading-tight">{{ item.symbol }}</span>
-                </div>
-                <span
-                  class="text-xs font-bold font-mono px-1.5 py-0.5 rounded self-start"
-                  :class="item.market === 'KR'
-                    ? 'text-rose-400/70 bg-rose-500/6'
-                    : 'text-emerald-400/70 bg-emerald-500/6'"
-                >{{ item.market }}</span>
+            <!-- 종목명·심볼 -->
+            <td class="px-4 md:px-5 py-3.5 whitespace-nowrap">
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-black text-white leading-tight">{{ displayName(item) }}</span>
+                <span class="px-1.5 py-0.5 rounded text-xs font-bold font-mono bg-indigo-500/10 text-indigo-400 border border-indigo-500/15 leading-tight">{{ item.symbol }}</span>
               </div>
             </td>
 
             <!-- 세션 배지 셀 -->
             <!-- live_session(백엔드, 공휴일 정확)이 있으면 우선 사용; 없으면 클라이언트 계산값 폴백 -->
-            <td class="px-2 py-3.5 text-center" @click.stop>
+            <td class="px-2 py-3.5 text-center whitespace-nowrap" @click.stop>
               <span
                 :class="[
                   'inline-flex items-center justify-center px-4 h-8 rounded-lg border text-xs font-extrabold leading-tight whitespace-nowrap',
@@ -145,13 +139,23 @@
               </span>
             </td>
 
+            <!-- 국가 배지 -->
+            <td class="px-3 py-3.5 text-center whitespace-nowrap">
+              <span
+                class="text-xs font-bold font-mono px-1.5 py-0.5 rounded"
+                :class="item.market === 'KR'
+                  ? 'text-rose-400/70 bg-rose-500/6'
+                  : 'text-emerald-400/70 bg-emerald-500/6'"
+              >{{ item.market }}</span>
+            </td>
+
             <!-- 수량 -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <span class="text-sm font-bold font-mono text-white/80">{{ formatQuantity(item.quantity) }}</span>
             </td>
 
             <!-- 평단가 -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <span class="text-sm font-bold font-mono text-base-content/60">
                 <template v-if="item.market === 'US'">{{ fmtUSAvg(item) }}</template>
                 <template v-else>{{ formatPrice(item.currency, item.average_price) }}</template>
@@ -159,7 +163,7 @@
             </td>
 
             <!-- 현재가 -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <span
                 v-if="item.price_available && item.current_price !== null"
                 class="text-sm font-extrabold font-mono inline-block px-1 rounded transition-colors duration-300"
@@ -174,7 +178,7 @@
             </td>
 
             <!-- 미실현손익 (US: 정규장 종가 기준 + 장전 손익 / KR: 서버 계산값) -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <template v-if="item.market === 'US'">
                 <template v-if="item.price_available && item.current_price !== null && item.average_price !== null">
                   <!-- 미실현손익: 애프터/주간 포함 총 손익 (현재가 − 평단) × 수량 — 증권사 '애프터/주간 ON' 과 동일 -->
@@ -203,7 +207,7 @@
             </td>
 
             <!-- 손익률 -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <template v-if="item.market === 'US'">
                 <template v-if="item.price_available && item.current_price !== null && item.average_price !== null">
                   <!-- 손익률: 애프터/주간 포함 총 손익률 (현재가 기준, 금액과 일치) -->
@@ -232,7 +236,7 @@
             </td>
 
             <!-- 평가금액 (US: 총=연장 현재가 기준 + 정규장=종가 기준, 정규장 중엔 정규장 줄 숨김) -->
-            <td class="px-3 py-3.5 text-right">
+            <td class="px-3 py-3.5 text-right whitespace-nowrap">
               <template v-if="fmtMarketValue(item) !== null">
                 <span class="text-sm font-bold font-mono text-white/70 inline-block px-1 rounded transition-colors duration-300" :class="flashCellClass(item)">{{ fmtMarketValue(item) }}</span>
                 <span
@@ -245,7 +249,7 @@
             </td>
 
             <!-- 관리 버튼 -->
-            <td class="px-4 md:px-5 py-3.5 text-center">
+            <td class="px-4 md:px-5 py-3.5 text-center whitespace-nowrap">
               <div class="flex items-center justify-center gap-1.5">
                 <!-- $ / ₩ 토글 (US 종목만) -->
                 <button
@@ -603,6 +607,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import axios from 'axios';
+import { confirm as confirmDialog } from '../composables/useConfirm.js';
 import StockChart from './StockChart.vue';
 import { localSearch, normalizeKrTicker, SEARCHABLE_STOCKS } from '../stocksKnown.js';
 import {
@@ -1255,7 +1260,7 @@ async function submitHoldingForm() {
 // 보유 종목 삭제
 async function deleteHolding(item) {
   if (actionLoading.value) return;
-  if (!confirm(`'${item.name || item.symbol}'을(를) 보유 목록에서 삭제할까요?`)) return;
+  if (!await confirmDialog({ message: `'${item.name || item.symbol}'을(를) 보유 목록에서 삭제할까요?`, danger: true, confirmText: '삭제' })) return;
   actionLoading.value = true;
   try {
     await axios.delete(

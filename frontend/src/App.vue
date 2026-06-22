@@ -268,16 +268,17 @@
             <div
               :class="[
                 'grid gap-4 shrink-0 items-start transition-all duration-300',
-                activeGridTickersCount === 1
-                  ? 'grid-cols-1'
-                  : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+                gridColsClass
               ]"
             >
-            <div
+            <!-- 채워진 슬롯만 렌더 (빈 슬롯은 DOM에 넣지 않아 CSS grid가 자동 컴팩트) -->
+            <template
               v-for="(ticker, idx) in gridTickers"
               :key="idx"
-              v-show="ticker !== '' || activeGridTickersCount !== 1"
-              :draggable="!!ticker"
+            >
+            <div
+              v-if="ticker"
+              :draggable="true"
               @click="activeGridIndex = idx"
               @dragstart="onGridDragStart(idx, $event)"
               @dragend="onGridDragEnd"
@@ -285,8 +286,7 @@
               @dragleave="onGridDragLeave(idx)"
               @drop="onGridDrop(idx)"
               :class="[
-                'group relative card bg-base-100/45 backdrop-blur-md border transition-all duration-250 overflow-hidden rounded-2xl',
-                ticker ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
+                'group relative card bg-base-100/45 backdrop-blur-md border transition-all duration-250 overflow-hidden rounded-2xl cursor-grab active:cursor-grabbing',
                 isGridClosed(idx)
                   ? 'h-60'
                   : (activeGridTickersCount === 1 ? 'h-80 sm:h-96 lg:h-120' : 'h-72 sm:h-80 lg:h-110'),
@@ -303,7 +303,6 @@
                 v-if="activeGridIndex === idx"
                 class="absolute top-0 left-4 right-4 h-0.5 rounded-b-full bg-indigo-500/70"
               ></div>
-
 
               <template v-if="ticker && gridStockData[idx]">
                 <!-- 휴장/장마감: 종가 숫자 표시 + 차트 보기 버튼 -->
@@ -349,22 +348,26 @@
               </template>
 
               <!-- 종목 데이터 로딩 중 -->
-              <div v-else-if="ticker" class="h-full flex flex-col items-center justify-center gap-3">
+              <div v-else class="h-full flex flex-col items-center justify-center gap-3">
                 <span class="loading loading-spinner text-indigo-500/60 loading-sm"></span>
                 <span class="text-[10px] text-base-content/35 font-mono tracking-widest uppercase">{{ ticker }} 데이터 수신 중...</span>
               </div>
+            </div>
+            </template>
 
-              <!-- 빈 슬롯 -->
-              <div v-else class="h-full flex flex-col items-center justify-center gap-3 text-center p-6 select-none">
-                <div class="w-12 h-12 rounded-xl border-2 border-dashed border-base-content/15 flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/25" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                </div>
-                <div class="flex flex-col gap-1">
-                  <span class="text-xs font-bold text-base-content/40">슬롯 비어 있음</span>
-                  <span class="text-[10px] text-base-content/25 leading-relaxed">왼쪽 관심 종목에서<br>종목을 클릭해 배치하세요</span>
-                </div>
+            <!-- 전체 빈 상태 안내 (차트가 하나도 없을 때만) -->
+            <div
+              v-if="activeGridTickersCount === 0"
+              class="col-span-full flex flex-col items-center justify-center gap-3 text-center p-10 select-none h-60 card bg-base-100/30 backdrop-blur-md border border-dashed border-base-content/15 rounded-2xl"
+            >
+              <div class="w-12 h-12 rounded-xl border-2 border-dashed border-base-content/15 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/25" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </div>
+              <div class="flex flex-col gap-1">
+                <span class="text-xs font-bold text-base-content/40">표시할 차트가 없습니다</span>
+                <span class="text-[10px] text-base-content/25 leading-relaxed">왼쪽 관심 종목에서<br>종목을 클릭해 배치하세요</span>
               </div>
             </div>
           </div>
@@ -449,6 +452,9 @@
         </div>
       </div>
     </Transition>
+
+    <!-- ── 전역 커스텀 confirm 모달 (단 한 번 마운트) ── -->
+    <ConfirmDialog />
   </div>
 </template>
 
@@ -458,6 +464,7 @@ import StockChart from './components/StockChart.vue';
 import PortfolioSummaryBar from './components/PortfolioSummaryBar.vue';
 import HoldingsPanel from './components/HoldingsPanel.vue';
 import UnifiedWatchlist from './components/UnifiedWatchlist.vue';
+import ConfirmDialog from './components/ConfirmDialog.vue';
 
 // ── template refs ──────────────────────────────────────────────
 const mainScroll = ref(null);
@@ -526,6 +533,20 @@ let _flashResetTimer = null;
 
 const activeGridTickersCount = computed(() => {
   return gridTickers.value.filter(t => t !== '').length;
+});
+
+// 등록 개수별 데스크탑 열 수 매핑 (Tailwind purge 방지: 클래스 리터럴로 기재)
+// 1→1열 / 2→2열 / 3→3열 / 4→2열(2×2) / 5→3열 / 6→3열 / 7이상→3열 폴백
+const GRID_COLS_MAP = {
+  1: 'grid-cols-1',
+  2: 'grid-cols-1 md:grid-cols-2',
+  3: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3',
+  4: 'grid-cols-1 md:grid-cols-2',
+  5: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3',
+  6: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3',
+};
+const gridColsClass = computed(() => {
+  return GRID_COLS_MAP[activeGridTickersCount.value] ?? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
 });
 
 // 현재 그리드 시장의 세션 라벨(정규장/주간거래/장마감 등). 같은 시장이면 모든 카드가 동일하므로

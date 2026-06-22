@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>진행 상황 — trading_info</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+      max-width: 960px; margin: 0 auto; padding: 32px 20px;
+      line-height: 1.6; color: #1f2328; background: #fff;
+    }
+    h1 { margin: 0 0 4px; font-size: 1.7rem; }
+    .sub { color: #656d76; margin: 0 0 24px; font-size: 0.9rem; }
+    .entry {
+      border: 1px solid #d0d7de; border-radius: 10px;
+      padding: 16px 20px; margin: 0 0 16px; background: #f6f8fa;
+    }
+    .entry h2 { margin: 0 0 6px; font-size: 1.1rem; }
+    .meta { font-size: 0.8rem; color: #656d76; margin: 0 0 12px; }
+    .badge {
+      display: inline-block; font-size: 0.72rem; font-weight: 600;
+      padding: 2px 9px; border-radius: 999px; vertical-align: middle;
+    }
+    .ok   { background: #1a7f37; color: #fff; }
+    .wip  { background: #9a6700; color: #fff; }
+    .fail { background: #cf222e; color: #fff; }
+    .req, .done {
+      margin: 6px 0 0; padding: 9px 13px; background: #fff;
+      border-radius: 7px; font-size: 0.95rem;
+    }
+    .req  { border-left: 3px solid #6e7781; }
+    .done { border-left: 3px solid #1a7f37; }
+    .req .label  { font-weight: 700; color: #6e7781; }
+    .done .label { font-weight: 700; color: #1a7f37; }
+    footer { margin-top: 32px; font-size: 0.8rem; color: #8b949e; text-align: center; }
+    /* 직원별 탭 (담당 기준 필터) */
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; padding: 0; }
+    .tab { font-size: 0.82rem; font-family: inherit; padding: 5px 13px; border: 1px solid #d0d7de; border-radius: 999px; background: #f6f8fa; color: #1f2328; cursor: pointer; line-height: 1.4; }
+    .tab:hover { background: #eaeef2; }
+    .tab.active { background: #1f2328; color: #fff; border-color: #1f2328; }
+    .tab .count { opacity: 0.55; margin-left: 5px; font-size: 0.75rem; }
+    .entry.hidden { display: none; }
+    .empty-note { display: none; color: #656d76; font-size: 0.9rem; text-align: center; padding: 24px; }
+  </style>
+</head>
+<body>
+  <h1>📋 진행 상황 — <em>trading_info (주식 모니터링 · 포트폴리오 트래커)</em></h1>
+  <p class="sub">개발자·비개발자 모두가 보는 진행 기록입니다. 각 항목은 <b>요청 → 처리</b>로 정리되며, 위쪽이 최신입니다. (상세 기술 내용은 git 커밋에 기록)</p>
+
+  <!--
+    새 항목 형식 (data-agent 필수 — 직원별 탭 필터용):
+    담당 키: main(메인) / tech-lead / backend / frontend / ui-ux / qa / review / security
+    교차 작업이면 공백으로 여러 개: data-agent="backend frontend"
+    <div class="entry" data-agent="main">
+      <h2>제목 <span class="badge ok">완료</span></h2>
+      <p class="meta">YYYY-MM-DD · 담당: ...</p>
+      <p class="req"><span class="label">📌 요청</span> — 쉬운 말로</p>
+      <p class="done"><span class="label">✅ 처리</span> — 쉬운 말로, 결과 중심</p>
+    </div>
+  -->
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-filter="all">전체</button>
+    <button class="tab" data-filter="main">메인</button>
+    <button class="tab" data-filter="tech-lead">tech-lead</button>
+    <button class="tab" data-filter="backend">backend</button>
+    <button class="tab" data-filter="frontend">frontend</button>
+    <button class="tab" data-filter="ui-ux">ui-ux</button>
+    <button class="tab" data-filter="qa">qa</button>
+    <button class="tab" data-filter="review">review</button>
+    <button class="tab" data-filter="security">security</button>
+  </nav>
+
+  <!-- ENTRIES:START -->
+  <div class="entry" data-agent="qa">
+    <h2>커스텀 confirm 모달 교체 — 회귀 검증 완료 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: qa</p>
+    <div class="req"><span class="label">요청</span> 네이티브 confirm()을 커스텀 모달(Promise 기반)로 교체한 뒤 기존 테스트가 깨지지 않는지, 빌드 에러는 없는지, 네이티브 confirm이 완전히 제거됐는지 검증 요청.</div>
+    <div class="done"><span class="label">처리</span> ① Vitest 전체 스위트 실행 — 기존 128개 전부 통과(회귀 없음). ② npm run build — 에러 없이 성공(393 kB). ③ 네이티브 confirm() 제거 확인 — HoldingsPanel·UnifiedWatchlist·App.vue 3곳 모두 window.confirm 흔적 없음, useConfirm.js의 export function confirm은 커스텀 구현으로 동명이인. ④ useConfirm 컴포저블 신규 단위 테스트 14케이스 추가(Promise resolve true/false, 옵션 기본값, 상태 정리, 중복 호출 방어, 연속 호출) — 전부 통과. 최종 142개 통과 / 0 실패.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>삭제·가져오기 확인 팝업 — 브라우저 기본 회색 다이얼로그를 앱 스타일 모달로 교체 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 보유종목 삭제, 관심종목 삭제, localStorage 가져오기 3곳에서 뜨는 브라우저 기본 회색 팝업을 앱 다크 테마에 맞는 커스텀 모달로 바꿔달라는 요청.</div>
+    <div class="done"><span class="label">처리</span> Promise 기반 전역 confirm 컴포저블(<code>useConfirm.js</code>)과 모달 컴포넌트(<code>ConfirmDialog.vue</code>)를 새로 만들고 App.vue에 전역 마운트. 삭제용(빨간 버튼)·가져오기용(기본 primary 버튼) 스타일 분기, ESC·배경 클릭으로도 취소 가능. 빌드 에러 없음, 기존 삭제·가져오기 동작 그대로 유지.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>종목 차트 그리드 — 관심종목 삭제 시 빈 칸 사라지고 차트 자동으로 당겨지게 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 관심종목을 삭제하면 그 자리가 "슬롯 비어 있음" 박스로 남아 차트 사이에 구멍이 생겼는데, 삭제 즉시 차트가 당겨져 빈 박스가 아예 안 보이게 해달라는 요청.</div>
+    <div class="done"><span class="label">처리</span> 빈 슬롯(`''`)을 DOM에 렌더하지 않고 채워진 슬롯만 그리도록 수정(v-if="ticker", template 래핑으로 배열 인덱스 정합 유지). CSS grid가 채워진 셀만 자동 배치하므로 구멍 없이 당겨짐. 빈 슬롯 플레이스홀더 제거, 차트가 0개일 때만 "표시할 차트가 없습니다" 안내 1칸 표시. 기존 기능(클릭 배치·드래그 순서 교환·열 수 자동 조절) 모두 유지. 빌드 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유종목 테이블 — KR/US 국가 배지를 독립 "국가" 컬럼으로 분리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <p><b>요청:</b> 종목 셀 안에 종목명·심볼과 함께 있던 KR/US 마켓 배지를 꺼내, 수량 열 바로 왼쪽에 "국가" 컬럼으로 분리해달라는 요청.</p>
+    <p><b>처리:</b> 종목 셀에서 마켓 배지 제거(종목명+심볼만 한 줄로 정리). 헤더에 "국가" <code>th</code>(text-center), 바디에 "국가" <code>td</code>(KR=rose, US=emerald, 기존 색 그대로)를 세션배지 열과 수량 열 사이에 삽입. 빌드 에러 없음.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>종목 차트 그리드 열 수를 등록 개수에 맞게 조정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <p><b>요청:</b> 종목을 4개 등록하면 데스크탑에서 "3+1" 배치가 돼 어색하니, 개수별로 균형 있게 배치되도록 고쳐달라는 요청.</p>
+    <p><b>처리:</b> <code>gridColsClass</code> computed를 추가해 개수별로 Tailwind 클래스를 매핑(1→1열 / 2→2열 / 3→3열 / 4→2열(2×2) / 5~6→3열 / 7이상→3열 폴백). 기존 인라인 삼항 조건을 해당 computed로 교체. 빌드 후 grid-cols-1·md:grid-cols-2·lg:grid-cols-3 모두 CSS에 포함 확인.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>차트 오버레이 미세 조정 (거터 축소 + 증감율 한 줄) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <div class="req"><span class="label">요청 :</span> 차트 우측 빈 공간을 줄이고(차트를 더 넓게), 오버레이 증감율이 두 줄로 개행되는 문제 해결</div>
+    <div class="done"><span class="label">처리 :</span> CHART_GUTTER 58→30px로 줄여 차트가 우측으로 더 확장되게 함(오버레이 위치·폭은 OVERLAY_WIDTH=58px로 고정 분리). 증감율 div에 whitespace-nowrap 추가 + '+&nbsp;' 공백 제거로 한 줄 표시. 빌드 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>좁은 화면 타임프레임 셀렉트 스타일 개선 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend</p>
+    <p class="req"><span class="label">📌 요청</span> — 카드 폭이 400px 미만일 때 나타나는 타임프레임 선택박스가 너무 길게 늘어남. 절반 정도로 줄이고, 선택된 글자를 가운데 정렬하고, 드롭다운 화살표가 보이게 해달라고 요청.</p>
+    <p class="done"><span class="label">✅ 처리</span> — StockChart.vue CSS에서 <code>.timeframe-select-compact</code>를 <code>flex: 0 0 auto; width: 5rem; max-width: 5rem</code>으로 고정 폭 지정(기존 flex-1 제거). <code>text-align: center; text-align-last: center</code>으로 선택 텍스트 가운데 정렬. <code>appearance: auto</code>로 네이티브 화살표 복원, 좌측 0.375rem·우측 1.25rem 패딩으로 화살표 공간 확보 및 텍스트 치우침 방지. 빌드(npm run build) 통과.</p>
+  </div>
+  <div class="entry" data-agent="qa">
+    <h2>isCoordinateVisible 단위 테스트 작성 + 전체 스위트 검증 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: qa-tester</p>
+    <p class="req"><span class="label">📌 요청</span> — 평단/현재가 오버레이 게이팅 로직(chartHelpers.js)이 추가됐으니, isCoordinateVisible 함수에 대한 단위 테스트를 작성하고 전체 Vitest 스위트(기존 82개 + 신규)가 모두 통과하는지, 빌드 에러는 없는지 확인해달라. 특히 차트를 줄였을 때 평단 좌표가 범위를 벗어나면 false가 나오는지를 꼼꼼히 검증해달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>src/utils/chartHelpers.test.js</b> 신규 작성. 경계값(null·undefined·음수·0·중간·chartHeight 정확히·chartHeight+1)과 차트 축소 시나리오(chartHeight 감소 시 같은 좌표가 false로 전환되는지) 등 32개 케이스 추가. Vitest 3파일 114개(기존 82 + 신규 32) 전부 통과, npm run build 에러 없음. 발견된 문제 없음.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>StockChart 수정 2건 — 타임프레임 셀렉트 위치 변경 + 평단 오버레이 하단 클리핑 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — ①좁은 카드(400px 미만)에서 타임프레임 셀렉트가 현재가 옆(헤더 우측)에 있는데, 배지(실적·MAX) 바로 다음 위치로 옮기고 남은 가로 공간을 채워 길게 표시해달라. ②평단가 오버레이가 차트 하단 아래로 벗어나도 계속 표시되는 문제를 수정해달라(화면 안에 있을 때만 표시).</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>StockChart.vue</b>: ①셀렉트 마크업을 헤더 우측 영역에서 좌측 배지 영역(flex-wrap 컨테이너) 안으로 이동하고, CSS에서 flex: 1 1 0%를 부여해 배지 다음 남은 폭을 자동으로 채우게 했습니다. 현재가/등락액 표시 공간은 별도 shrink-0 영역으로 보존됩니다. ②<b>utils/chartHelpers.js</b>에 isCoordinateVisible(coord, chartHeight) 헬퍼를 분리·export하여, 좌표가 0 이상이고 차트 높이 이하인 경우만 오버레이를 표시합니다(현재가·평단가 모두 적용). 빌드 통과 확인.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>차트 타임프레임 전환 기준 — 뷰포트 미디어쿼리 → 카드 컨테이너 쿼리로 교체 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 세로 모니터에서 브라우저 창 자체는 넓지만 차트 카드 폭은 좁은데, 뷰포트 기반 미디어쿼리라 셀렉트 전환이 전혀 안 됐다. 카드 자체의 폭을 기준으로 좁으면 셀렉트, 넓으면 버튼이 나오도록 고쳐달라. 좁을 때는 헤더 우측 구석에 셀렉트가 나타나게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>StockChart.vue</b>: CSS @container 쿼리로 전환 기준을 교체했습니다. 카드 루트 div에 container-type: inline-size를 부여하고, <b>카드 폭 400px 미만</b>이면 2행 타임프레임 버튼 행 전체를 숨기고, 헤더 1행의 현재가·등락액 우측에 컴팩트 셀렉트를 표시합니다. 400px 이상이면 기존 버튼 그리드 행이 정상 표시되고 셀렉트는 숨깁니다. 셀렉트 기능(:value 바인딩, changeTimeframe 연동)은 기존과 동일하며, 빌드(npm run build) 오류 없음 확인.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>세로 모니터(좁은 폭) 반응형 UI 수정 — 보유종목 표 줄바꿈 방지 + 타임프레임 셀렉트 전환 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 세로 모니터(400~800px 폭)에서 두 가지가 깨짐. ①보유종목 표의 종목명·금액 숫자가 셀 안에서 줄바꿈돼 보기 흉함. ②차트 타임프레임 버튼이 좁은 화면에서 너무 작아지거나 차트를 가림. 기존 상승/하락 색·다크 테마 유지하면서 고쳐달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>HoldingsPanel.vue</b>: 표 래퍼(overflow-x: auto)는 원래 있었고, 테이블 최소 폭을 min-w-215(860px)로 조정한 뒤 모든 thead·tbody 셀에 whitespace-nowrap을 추가해 셀이 절대 줄바꿈하지 않도록 했습니다. 종목명 행의 flex-wrap도 제거해 심볼 배지가 아래로 밀리지 않습니다. 표 전체가 화면보다 넓으면 가로 스크롤로 처리됩니다. <b>StockChart.vue</b>: 버튼 그리드와 select를 함께 마크업하고, CSS 미디어쿼리(540px 기준)로 좁으면 버튼 숨기고 select 표시, 넓으면 반대로 전환합니다. select의 change 이벤트는 기존 changeTimeframe() 핸들러와 동일하게 연결했고 :value 바인딩으로 현재 선택값이 항상 반영됩니다.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>실시간 차트 갱신 속도 개선 — 종목당 ~10초 → ~3초로 단축 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 차트가 멈춘 것처럼 느리다. 직접 WebSocket을 측정해 보니 MU 같은 종목이 8~14초에 한 번씩만 갱신되고 있었다. 16개 종목을 구독했을 때 각 종목이 2~3초마다 갱신되도록 빠르게 해달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 KIS 현재가를 종목마다 순서대로 하나씩 받고 매번 100ms를 기다리는 구조여서, 16개 종목이면 최소 1.6초 + 네트워크 대기로 10초 이상 걸렸습니다. <b>KisParallelPriceFetcher</b>를 새로 만들어 Guzzle Pool(동시 8개)로 여러 종목을 한꺼번에 KIS에 요청합니다. 사이클 시작 시 모든 종목의 현재가를 ~220ms 안에 미리 캐시에 채워두면, 이후 각 종목 데이터 조성·전송이 캐시 히트로 처리됩니다. 고정 100ms 대기도 완전히 제거했습니다. 측정 결과: 16개 종목 기준 사이클 합계 <b>중앙값 308ms, p90 387ms</b>(기존 ~10초 이상). 3초 주기 WS에서 종목당 갱신 간격이 <b>약 3.3초</b>로 목표 달성. Yahoo 캔들 TTL도 30초→90초로 늘려 만료 이상치 발생 빈도를 1/3로 줄였습니다. KIS 레이트리밋(EGW00201) 에러 없음. 테스트 49개 전부 통과.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>미국 종목 한글 검색 지원 — "샌디스크" 입력 시 SNDK 조회 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 관심종목 추가 검색창에서 "샌디스크" 처럼 미국 종목의 한글 이름을 입력해도 검색이 되게 해달라. 지금은 영문("SanDisk")이나 티커("SNDK")만 됨.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 한국투자증권(KIS) 공개 해외주식 종목마스터(NASDAQ·NYSE·AMEX)를 자동으로 내려받아 <code>us_stocks.json</code>(12,443개 종목, 한글명·영문명·티커 포함)으로 저장합니다. 검색 시 이 파일을 먼저 뒤져 한글·영문·티커 부분일치로 결과를 내고, 마스터에 없는 종목만 기존 Yahoo Finance로 보완합니다. 이제 "샌디스크" → SNDK, "테슬라" → TSLA 처럼 한글로 검색하면 정확하게 나옵니다. 마스터 재갱신이 필요할 때는 <code>php artisan stocks:import-us</code> 한 줄로 다시 받을 수 있습니다. 테스트 49개 전부 통과.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>주식 상승·하락 색상 통일 — 상승 빨강, 하락 파랑 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 미국 주식은 상승=초록, 하락=빨강으로 표시되고 한국 주식은 상승=빨강, 하락=파랑이라 화면에서 색이 뒤섞여 혼란스럽다. 국내·미국 구분 없이 상승이면 빨강, 하락이면 파랑으로 통일해달라. 차트 헤더 현재 주가도 흰색이 아니라 상승/하락 방향에 맞게 빨강/파랑으로 보여달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 모든 화면에서 상승(증가)=빨강(rose-400, #f43f5e), 하락(감소)=파랑(sky-400, #38bdf8)으로 통일했습니다. 바꾼 위치: ① 색상 유틸(format.js) — US 전용 초록 분기 제거, market 인자는 호환용으로 시그니처만 유지. ② 지수·개별종목 글자색(App.vue). ③ 차트 헤더 현재가 글자색 — 상승이면 빨강, 하락이면 파랑(방향색 표시), 깜빡임(priceFlash)도 방향색 통일. ④ 차트 헤더 등락액 글자색. ⑤ 차트 현재가 오버레이 박스 배경 — 상승=빨간 박스, 하락=파란 박스(기존 초록·남색 제거). ⑥ 캔들스틱 차트 상승봉·하락봉 색(초기화·종목전환 모두). 평단가 오버레이(노란색)·세션 배지(의미색)는 방향색이 아니라 그대로 유지. 테스트 67개 전부 통과, 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>보유종목 세션 배지 — 미국 공휴일 정확히 반영 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유종목 수량 옆 세션 배지(정규장·프리마켓·주간거래 등)가 미국 공휴일에도 '정규장'으로 잘못 뜬다. 프론트가 시계만 보고 판단하기 때문인데, 공휴일인지 알 수 있는 건 백엔드뿐이므로 백엔드가 종목별 세션을 계산해서 내려주고 프론트는 그 값을 쓰게 해달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 백엔드가 각 보유종목에 <code>live_session</code> 필드를 추가로 내려줍니다. 미국 종목은 Yahoo Finance SPY 메타로 오늘이 거래일인지 날짜 캐시로 확인하고, 한국 종목은 KIS 국내휴장일조회 API로 확인합니다. 공휴일이면 시간과 무관하게 '장마감'이 됩니다. 세션 판정 로직은 <code>MarketSessionService</code>로 추출해 StockController와 DashboardController가 공유합니다(중복 없음). 프론트는 <code>item.live_session</code>이 있으면 우선 사용하고 없으면 기존 클라이언트 시간 계산으로 폴백합니다. 현재 실측: MU(미국 주간거래 시간) → '주간거래', 0167A0(한국 정규장 종료 후) → '장마감'. 백엔드 테스트 49개·프론트 테스트 67개 통과, 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유종목 표 기능 강화 — 세션 배지 · 통화 토글 · 평가금액 열 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유종목 표에 ① 각 종목 수량 앞에 현재 거래 세션 배지(정규장·프리마켓·애프터 등 실시간 자동 전환), ② 미국 종목 관리 칸에 달러/원화 토글 버튼(환율 환산, 새로고침 후 유지), ③ 손익률 오른쪽에 평가금액(현재가×수량) 열을 추가해 달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 세 가지를 모두 추가했습니다. <b>세션 배지:</b> Intl.DateTimeFormat으로 KST(한국)/ET(미국) 타임존을 정확히 계산해 KR 정규장(09:00~15:30)·US 프리마켓/정규장/애프터/주간거래를 30초마다 자동 전환합니다(서머타임 자동 반영, 공휴일은 시간 기준으로만 판정). <b>통화 토글:</b> 미국 종목 관리 칸에 $·₩ 버튼을 추가해 평단가·현재가·미실현손익·평가금액을 달러↔원화(현재 환율 기준)로 전환하며, 선택 상태를 localStorage에 저장해 새로고침 후에도 유지됩니다. 환율이 없으면 달러 전용으로 폴백. <b>평가금액 열:</b> 현재가×수량을 손익률 오른쪽에 표시하며 통화 토글과 연동됩니다. App.vue에서 HoldingsPanel에 exchange-rate prop도 추가했습니다. 테스트 67개 통과·빌드 성공.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>미국 거래시간(세션) 증권사 기준으로 정밀 보정 + 세션 배지 크기 통일 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 증권사 거래시간 안내(이미지)에 맞춰 미국 주식 세션 시간을 수정하고, 국내/미국 토글 옆 세션 배지를 토글 버튼과 같은 크기로 키워줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 미국 세션 구간을 증권사 기준(서머타임/한국시간: 주간거래 09:00~16:30 · 프리마켓 17:00~22:30 · 정규장 22:30~익일05:00 · 애프터 05:00~08:30)에 정확히 맞췄습니다. 이전엔 주간거래·애프터 끝 시각이 30분씩 길게 잡혀 있었는데, 사이 공백 시간(16:30~17:00, 08:30~09:00)은 '장마감'으로 처리되도록 보정(차트·보유종목 시세 경로 모두 동일 적용). 경계 시각 7곳을 직접 검산해 정확함을 확인. 또 토글 옆 세션 배지를 토글 버튼과 동일 크기로 키웠습니다. 백엔드 테스트 49개 통과.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>미국 보유종목 미실현손익을 '총액(애프터/주간 포함)' 헤드라인으로 변경 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 미국 보유종목 손익이 증권사와 안 맞는다. 증권사에서 애프터/주간 선택하면 +$944 정도가 평가손익인데, 우리 앱은 정규장 기준(+$543)이 크게 떠 있다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 표시 방식을 증권사와 동일하게 맞췄습니다. 미국 보유종목의 <b>미실현손익을 '애프터/주간 포함 총 손익'(현재가 기준, 예 +$948)</b>으로 크게 표시하고, 그 아래 작게 <b>'장전 +$404'(그중 연장시간 손익분)</b>을 보조로 보여줍니다. 손익률도 연장 포함 총 손익률로 통일. 이 값은 증권사 '애프터/주간 ON' 평가손익과 일치합니다. (정규장 종가·연장가 데이터는 직전에 KIS BAQ로 바로잡아 둠) 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>MU(마이크론) 장전 손익이 0으로 표시되던 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유 종목 MU(마이크론)의 장전(연장) 손익이 0으로 나온다. KIS에서 직접 확인하면 연장 현재가는 1,157~1,159 달러인데 대시보드는 정규장 종가(1,133.99달러)와 같은 값을 현재가로 보여 장전 손익이 계산되지 않고 있다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 연장 시간대에도 정규장 거래소 코드(NAS)만 조회해서였습니다. NAS에서 받은 <code>last</code> 값은 정규장 종가와 같아, <code>current_price = regular_close = 1,133.99</code>가 되어 장전 손익이 0이 됐습니다. <b>수정:</b> ① <code>KisOverseasQuoteProvider</code>에 현재 미국 시장 세션 판정 로직을 추가해, 프리마켓·애프터마켓·주간거래(주간 ATS) 시간대에는 Blue Ocean 거래소 코드(BAQ→BAY→BAA)를 먼저 조회하도록 바꿨습니다. BAQ의 <code>last</code>=연장 현재가, <code>base</code>=정규장 종가로 매핑합니다. ② <code>prices</code> DB 테이블에 <code>regular_close</code> 컬럼을 추가하는 마이그레이션을 만들어 실행했습니다. ③ <code>PriceService</code>가 이 값을 저장·조회하도록 수정했습니다. <b>실측 검산(2026-06-22):</b> MU 평단 $1,100, 16주 기준 — <code>current_price=1,159.3</code>(연장가), <code>regular_close=1,133.99</code>(정규장 종가), 미실현손익=<b>+$543.84</b>, 장전손익=<b>+$404.96</b>. 정규장 시간대에는 NAS를 사용해 <code>current=regular_close</code>가 되어 장전 손익=0(의도된 동작). KR 종목(0167A0 등) 영향 없음. 테스트 49개 전부 통과. 8080 데몬 단일 프로세스 유지.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>미국 주식 손익을 미실현손익 + 장전 손익으로 나눠 표시 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 미국 주식 보유 종목에서 정규장(오전 9시 30분 ~ 오후 4시 ET) 이외 시간(프리마켓·애프터마켓·주간거래)의 가격까지 반영해, 손익을 두 가지로 나눠 표시해 달라. ① <b>미실현손익</b> = 정규장 마지막 종가 기준 손익, ② <b>장전(연장) 손익</b> = 지금 연장 시간 현재가 − 정규장 종가. 국내 종목은 기존 그대로.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 세 곳을 수정했습니다. <b>백엔드:</b> KIS 해외주식 현재가 API(HHDFS00000300)가 반환하는 <code>base</code> 필드(전일 정규장 종가)를 <code>regular_close</code>로 추출하도록 <code>KisOverseasQuoteProvider</code>를 수정했습니다. <code>DashboardController</code>에서 미국 종목에 <code>regular_close_price</code> 필드를 추가하고, 미실현손익 계산 기준을 정규장 종가(<code>regular_close</code>)로 고정했습니다. 국내 종목은 <code>regular_close_price: null</code>이 내려와 기존 동작 유지. <b>프론트엔드(HoldingsPanel):</b> 보유 표의 미국 행에 미실현손익과 그 아래 장전 손익을 작은 글씨로 함께 표시하도록 변경. 손익률 열도 정규장 종가 기준 미실현 손익률을 주 표시하고, 장전 손익이 있으면 "총 손익률"을 흐린 글씨로 추가 표시. <b>프론트엔드(App.vue liveHoldings):</b> WS 실시간 가격은 <code>current_price</code>(연장 현재가)만 덮어쓰고, <code>regular_close_price</code>(대시보드 폴링값)는 보존해 미실현손익 기준이 실시간으로 흔들리지 않도록 유지. 폴백 처리: <code>regular_close</code>가 없으면 <code>current_price</code>를 그대로 사용해 장전 손익이 0으로 표시됩니다(기존과 동일). 백엔드 테스트 49개·프론트 테스트 67개 전부 통과. 빌드 정상. WS 데몬(8080) 재시작 완료.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>차트 드래그 핸들 키우기 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 차트 위치를 바꾸는 드래그 버튼이 너무 작게 보인다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 차트 카드 상단의 드래그 손잡이를 더 크게(높이·여백 확대, 아이콘 확대) 키우고, 마우스를 올려야만 보이던 것을 인디고색으로 항상 보이게 바꿔 쉽게 잡을 수 있도록 했습니다. 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>실시간 갱신 속도 최적화 — 15개 종목 한 사이클 크게 단축 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 차트 그리드가 6개로 늘어 구독 종목이 15개 안팎이 되면서 실시간 갱신 한 사이클이 느려졌다. 15개 기준 사이클 시간을 크게 단축하고 종목이 더 늘어도 버틸 수 있게 해달라.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 세 가지를 개선했습니다. ① <b>차트 데이터(캔들) 캐시를 3초 → 30초로 늘렸습니다.</b> 과거 봉(캔들)은 초 단위로 거의 변하지 않고 실시간 가격은 KIS API 3초 캐시가 따로 담당하므로, 대부분의 사이클에서 무거운 Yahoo 외부 호출이 생략되고 가벼운 KIS 현재가 호출만 남습니다. ② <b>미국 주식 거래소 탐색 결과를 하루 캐시했습니다.</b> 나스닥·뉴욕·아멕스 중 어느 거래소인지 모르면 최대 6번 순차 시도했는데, 한 번 성공한 거래소를 기억해 두어 다음부터는 1번만 호출합니다. ③ <b>종목당 대기를 150ms → 100ms로 단축했습니다.</b> 캐시 활용으로 실제 API 호출이 줄어 레이트리밋 여유가 생겼기 때문입니다. 예상 효과: 캐시 워밍 후 15개 기준 사이클이 ~10초대 → ~1.5~2초대로 단축. 실시간 서버(8080) 재시작 완료. 테스트 49개 전부 통과.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>차트 6개 시 일부 종목 데이터 안 들어오던 문제 수정(실시간 전송 개선) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 차트를 6개로 늘리니 일부 종목(예: 삼성전자·011070)이 "데이터 수신 중"에서 멈춰 데이터를 못 받아온다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 데이터 조회 자체는 정상(HTTP로 확인)이었고, 원인은 실시간(WebSocket) 전송 방식이었습니다. 실시간 서버가 모든 종목을 하나씩 순서대로 받아오면서 종목당 0.25초씩 쉬고, <b>전부 다 받은 뒤에야 한 번에 보내</b> 종목 수가 늘면 뒤 종목까지 10초 이상 걸렸습니다. 이를 <b>한 종목씩 받는 즉시 바로 전송</b>하도록 바꿔(대기도 0.25→0.15초로 단축) 카드가 순서대로 즉시 채워지게 했습니다. 실시간 서버(8080)를 재시작해 적용. 데이터 조회 로직·레이트리밋 안전장치는 그대로 유지.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>사이드바 컨트롤을 헤더로 이동 + 좌/우 위치 변경 버튼 복구 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 사이드바 여는 버튼을 상단 헤더로 옮기고, 사이드바가 오른쪽에 있을 때 왼쪽으로 옮기는 버튼이 사라진 것 같으니 복구해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 상단 헤더 오른쪽(실시간 표시 옆)에 버튼 두 개를 추가했습니다: ① <b>사이드바 열기/닫기</b>(닫혀 있으면 인디고색으로 강조·깜빡여 눈에 잘 띔), ② <b>사이드바 좌/우 위치 변경</b>(좌우 화살표 아이콘 — 실제로 위치를 바꾸는 버튼이 그동안 없었는데 이번에 추가). 기존에 사이드바 가장자리에 얇게 붙어 있던 토글 버튼은 제거했습니다. 위치 선택은 브라우저에 저장돼 새로고침 후에도 유지됩니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>차트 그리드 4개 → 6개로 확장 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 하단 차트 영역을 최대 6개까지 볼 수 있게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 차트 그리드 슬롯을 4개(2×2)에서 <b>6개</b>로 늘렸습니다. 화면 크기에 따라 모바일 1열·중간 2열·큰 화면 3열(2줄)로 배치됩니다. 관심종목이 6개를 넘으면 앞에서부터 6개가 채워지고, 드래그로 위치 교환·국내/미국 토글·평단선 표시 등 기존 기능은 6개에서도 그대로 동작합니다. 슬롯 개수는 한 곳(GRID_SIZE)에서 관리하도록 정리했습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>차트 국내/미국 토글 → 사이드바 탭 연동 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 하단 차트 영역의 국내/미국 토글을 누르면 사이드바 관심종목 탭도 함께 연동되게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 차트 영역의 국내/미국 선택값을 사이드바에 내려, <b>차트에서 국내를 누르면 사이드바도 "한국", 미국을 누르면 "미국"으로 자동 전환</b>되게 했습니다(앱을 처음 열 때도 현재 차트 시장에 맞춰 사이드바가 같은 탭으로 표시). 사이드바에서 '전체'를 따로 보고 싶을 땐 직접 누르면 되고, 이후 차트를 토글하면 다시 연동됩니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>관심종목 탭 한국/미국/전체 + 목록도 시장별 필터 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 사이드바 관심종목 탭을 ① "KR/US/전체" → "한국/미국/전체"로 바꾸고, ② 탭이 검색에만 적용되지 말고 관심종목 목록도 분리해서 보이게(전체=모두, 한국=한국주식만, 미국=미국주식만).</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 탭 라벨을 "한국 / 미국 / 전체"로 변경. ② 탭 선택에 따라 관심종목 목록을 시장별로 필터링하도록 했습니다(전체=전부, 한국=한국 종목만, 미국=미국 종목만). 상단 개수 배지도 현재 탭 기준 개수로 표시하고, 선택한 시장에 종목이 없으면 "○○ 관심 종목이 없습니다" 안내를 보여줍니다. (검색은 기존대로 해당 시장으로 연동) 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>국내/미국 토글 속도 개선 — 캐시로 즉시 표시 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 국내/미국 토글을 누르면 차트 데이터를 받아오는 게 너무 느리다. 속도를 개선해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 토글할 때 차트 영역을 빈 상태(로딩)로 비우고 다음 실시간 데이터가 올 때까지 기다린 것이었습니다. 실시간 연결은 이미 국내·미국 관심종목 데이터를 모두 받아오고 있으므로, 받은 데이터를 종목별로 <b>캐시</b>해두었다가 토글 시 <b>캐시 값으로 즉시 채워</b> 바로 차트가 보이게 했습니다(직후 실시간으로 최신값 갱신). 같은 방식으로 관심종목에서 다른 시장 종목을 클릭할 때도 즉시 표시됩니다. 한 번이라도 받아온 종목은 토글이 거의 즉각 전환됩니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>하단 차트 카드 드래그앤드롭으로 위치 교환 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 하단 종목 차트들도 드래그앤드롭으로 서로 위치를 바꿀 수 있게 해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 각 차트 카드 상단 가운데에 드래그 핸들(점 6개 그립)을 추가했습니다(마우스를 카드에 올리면 나타남). 이 핸들을 잡고 다른 카드로 끌어다 놓으면 두 차트의 위치가 서로 바뀝니다(차트 데이터까지 함께 이동해 재요청 없이 즉시 교환, 드롭 대상 카드는 파란 테두리로 강조). 차트 자체의 확대/이동·타임프레임 버튼과 충돌하지 않도록 핸들로만 드래그되게 했습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>검색 정확도 개선 — 일치 종목을 맨 위로(비일치 항목 제거) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — "마이크론"을 검색하면 정작 마이크론(MU)이 맨 위에 안 뜨고, "마이크로소프트"처럼 검색어와 일치하지 않는 종목이 위에 떠서 (Enter 시 엉뚱한 종목이 추가됨).</p>
+    <p class="done"><span class="label">✅ 처리</span> — 검색 결과에 관련도 점수를 매겨 <b>정확히 일치 → 앞부분 일치 → 부분 포함</b> 순으로 정렬했습니다. 또 한글로 검색했을 때 종목명/티커에 그 검색어가 실제로 들어있지 않은 결과(예: '마이크론' 검색의 '마이크로소프트')는 목록에서 제외합니다. 이제 "마이크론" → '마이크론 테크놀로지(MU)'가 맨 위에 오고, Enter로도 올바른 종목이 추가됩니다. 관심종목 사이드바 검색과 보유종목 추가 모달 검색 모두 동일하게 적용. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>관심종목 검색 — Enter로 일치 종목 바로 추가 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 종목을 검색창에 입력한 뒤 결과를 일일이 클릭해야 추가되는데, 검색어와 일치하는 종목이 바로 적용(추가)되게 하고 싶다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 관심종목 검색창에서 <b>Enter 키를 누르면 검색어와 가장 잘 맞는 종목이 바로 관심 목록에 추가</b>되도록 했습니다(티커·종목명이 정확히 일치하면 그 종목을, 아니면 최상위 검색 결과를 추가). 추가 후 검색창은 자동으로 비워져 이어서 검색할 수 있습니다. 이제 "텍스트 입력 → Enter"만으로 종목을 등록할 수 있어 마우스로 + 버튼을 누를 필요가 없습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>요약바 표기 정리(환율·흰색) + 하단 그리드 국내/미국 토글 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — ① 헤더의 "USD/KRW"를 "환율"로, ② 그 글자색을 다른 항목처럼 흰색으로, ③ 하단 차트(2×2 그리드)를 국내주식/미국주식 토글 버튼으로 스왑되게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① "USD/KRW" 라벨을 "환율"로 변경. ② 회색이던 환율 글자를 흰색으로 바꿔 다른 손익 숫자와 톤을 통일. ③ 하단 그리드 위에 [국내] [미국] 토글을 추가했습니다. 누르면 그리드가 해당 시장의 관심종목 차트만 보이도록 전환되고(선택은 브라우저에 저장돼 새로고침 후 유지), 왼쪽 관심종목에서 다른 시장 종목을 클릭하면 그리드도 그 시장으로 자동 전환됩니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>상단 손익 요약 바를 헤더에 통합 + 하단 스트립 제거 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 하단(헤더 둘째 줄)의 환율·보유 손익 요약 정보를 헤더 영역으로 합치고, 불필요해진 그 줄을 제거해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 로고 아래 별도 줄로 있던 손익 요약 바(환율·미국/국내 손익)를 로고와 같은 헤더 한 줄로 끌어올려 통합했습니다(로고 — 요약 — 실시간 표시 순). 인라인에 맞게 컴팩트 표기를 사용하고, 비어버린 둘째 줄(하단 스트립)은 제거했습니다. 헤더가 한 줄로 짧아져 본문 영역이 더 넓어집니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유종목 표 현재가 — 그리드 차트와 실시간 동기화 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">요청</span> — 보유종목 표의 "현재가"가 그리드 차트보다 최대 10초 뒤처짐. SOL(0167A0), 마이크론(MU) 등에서 숫자가 어긋나 보임.</p>
+    <p class="done"><span class="label">처리</span> — App.vue 수정 3곳: ① 보유종목 심볼을 WebSocket 구독 티커에 추가, ② WS 메시지 수신 시 <code>livePrices</code> 반응형 맵에 실시간 가격 저장(normalizeTicker로 .KS/.KQ 접미사 정규화), ③ <code>liveHoldings</code> computed 추가 — 폴링 데이터를 기반으로 라이브 가격이 있으면 current_price 교체 + profitRate·profitKRW·marketValueKRW·costKRW 재계산. HoldingsPanel과 PortfolioSummaryBar 모두 liveHoldings를 받아 표·요약바가 일관되게 차트와 동기화됨. 폴링(10초)은 평단가·신규 종목 반영용으로 유지. 테스트 67개 통과, 빌드 성공.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>보유종목 스티키 미작동 수정(스크롤 구조 복구) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 앞서 적용한 보유종목 상단 고정(스티키)이 실제로는 동작하지 않는다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 화면 전체 높이 설정이었습니다. 본문 영역이 "내부에서 스크롤"되도록 설계돼 있었는데(메인 패널에 스크롤 속성·상단 헤더 고정 등), 루트 높이가 "최소 화면 높이"로 되어 있어 실제로는 페이지 전체가 스크롤되고 있었습니다. 그래서 고정 기준이 되는 메인 영역이 페이지와 함께 통째로 밀려 스티키가 먹지 않았습니다. 루트를 "화면 높이 고정"으로 바꾸고 중간 영역들이 줄어들 수 있게 보정해, 의도대로 메인 패널이 내부 스크롤되도록 복구했습니다. 이제 상단 헤더(손익 요약)는 항상 고정이고, 보유종목 패널도 스크롤 시 상단에 정상적으로 붙어 있습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>지수 영역 접기/펼치기 + 보유종목 상단 고정(스티키) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — ① 나스닥·코스피 지수 영역에 "열기/닫기"(접기/펼치기) 기능 추가, ② 보유종목 패널을 스티키 처리해서 아래로 스크롤해도 화면 상단에 계속 고정되게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 지수 카드 위에 접기/펼치기 헤더 바를 추가했습니다(화살표 + "지수 · 나스닥/코스피" + 접기/펼치기 표시). 누르면 지수 카드가 접히고, 접힘 상태는 브라우저에 저장돼 새로고침 후에도 유지됩니다. ② 보유종목 패널을 sticky(상단 고정)로 처리해, 아래 차트들을 스크롤해도 항상 화면 맨 위에 남아 보유 현황을 계속 볼 수 있게 했습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>차트 표기 정리: 평단 배지 제거·라벨/단위 통일·국내 영숫자코드 인식 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — ① 차트 헤더의 "평단" 배지(관리 버튼) 없애기, ② 차트 위 평단선 라벨 "MY AVG"를 "평단"으로, ③ 배지 글자 조금 더 크게, ④ 국내주식 차트 안 금액은 "원"으로 통일(₩ 기호 빼기), ⑤ 국내주식 차트 우측 눈금/오버레이는 정수로.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 헤더의 평단 관리 버튼·배지를 제거(보유종목은 차트 위 평단선으로 자동 표시되므로 중복 제거). ② 평단선 우측 라벨을 "MY AVG"→"평단"으로 변경. ③ 티커·세션·MAX·실적 배지 글자 크기를 한 단계 키움. ④ 국내주식의 헤더 현재가·MAX·평단 표기를 "₩28,845"→"28,845원" 식으로 통일. ⑤ 핵심 원인은 신형 국내 영숫자 코드(예: 0167A0)를 "국내주식"으로 못 알아봐 미국식(소수점·달러)으로 표시되던 것 — 이 코드를 국내로 인식하게 고쳐 우측 눈금이 정수(28,845)로, 금액도 원화 규칙으로 나오게 했습니다. 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유 종목 표 드래그 순서 변경 · 그리드 차트 평단선 자동 적용 · 차트 수익률 배지 제거 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — ① 보유 종목 표에서 행을 마우스로 끌어다 순서를 바꾸고, 새로 고쳐도 그 순서가 유지됐으면 한다. ② 관심 종목 그리드(2×2 카드)에서 내가 보유 중인 종목(예: SOL·마이크론)을 볼 때 평단선이 자동으로 그려지지 않는다. ③ 차트 헤더의 "수익률 +X.XX%" 배지가 불필요하다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 보유 종목 표 각 행 왼쪽에 드래그 핸들(⠿)을 추가했습니다. 행을 끌면 원하는 위치로 순서를 바꿀 수 있고, 변경된 순서는 브라우저 저장소(localStorage)에 기록돼 새로 고침 후에도 유지됩니다. 기존 행 클릭(차트 모달 열기)·수정·삭제 버튼은 그대로 동작하며, 드래그 직후에 차트 모달이 열리지 않도록 처리했습니다. ② 그리드 카드 차트와 그리드 차트 모달에 보유 평단가를 자동으로 전달하도록 App.vue를 수정했습니다(한국 종목의 .KS/.KQ 접미사 차이도 정규화해 정확히 매칭). 이미 이 기능이 완성되어 있던 HoldingsPanel 내부 차트 모달도 동작을 확인했습니다. ③ StockChart 헤더의 "수익률 %" 배지와 관련 계산 코드(yieldRate)를 삭제했습니다. 평단선·평단 배지·평단 관리 버튼은 영향 없이 유지됩니다. Vitest 67개 통과, 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>지수 $기호 표기 제거 + 관심종목 외 종목이 그리드에 남던 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — ① 나스닥100 선물·코스피 지수는 통화(달러)가 아니라 지수인데 가격 앞에 "$"가 붙어 있다. ② 관심종목에 저장한 것(SOL·마이크론)만 모니터링 카드에 나와야 하는데, 지운 인텔·브로드컴이 계속 보인다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 차트 카드 우상단 가격 표기에서 종목이 "지수"(나스닥 선물·코스피 등)인 경우 통화기호 없이 숫자만 나오도록 고쳤습니다(주식·ETF는 기존대로 $/₩ 유지). ② 모니터링 2×2 그리드가 더 이상 쓰지 않는 옛 브라우저 저장값(localStorage)으로 채워지고 이후 실제 관심종목과 동기화되지 않아, 관심종목에서 지운 종목이 그리드에 남아 있었습니다. 이제 옛 저장값을 제거하고, 그리드를 항상 실제 관심종목과 일치시킵니다(관심종목에 없는 종목은 그리드에서 자동 제거, 빈 칸은 관심종목으로 채움). 프론트 테스트 67개 통과·빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>미국 주식 주간거래(한국 낮) 시간에 시세·분봉이 갱신되지 않는 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: backend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 미국 주식 주간거래(한국 낮 시간, 뉴욕 일요일 저녁~월요일 새벽)에 마이크론(MU) 등 현재가가 1133.99에 고정되고, 분봉 차트에 새 봉이 생기지 않습니다. 세션 라벨(주간거래 표시)은 정상인데 실제 가격이 안 바뀌는 상태입니다.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 KIS(한국투자증권) API의 거래소 코드 문제였습니다. 정규장 코드(NAS·NYS·AMS)는 장이 닫힌 주간거래 시간에 전일 종가(고정값)만 반환합니다. KIS가 주간거래(Blue Ocean ATS)에 별도 코드를 제공하는데, 나스닥 상장 종목은 BAQ, 뉴욕거래소는 BAY, 아멕스는 BAA를 사용해야 실시간 시세를 받을 수 있습니다. 주간거래 시간에는 BAQ·BAY·BAA를 먼저 시도하고, 정규장·프리·애프터 시간에는 기존 코드(NAS 등)를 우선 사용하도록 순서를 조정했습니다(분봉 조회 함수도 동일 수정). 현재가 1164 수준으로 실시간 갱신 확인, 분봉 차트도 현재 시각 봉 생성 확인. 기존 49개 테스트 전부 통과.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유 종목 추가/수정 모달이 화면 전체를 덮지 못하고 잘리는 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유 종목을 추가하거나 수정하려고 버튼을 누르면 팝업창이 "보유 종목" 영역 안에 갇혀 오른쪽·아래쪽이 잘립니다. 평단가 아래의 저장·취소 버튼까지 스크롤이 안 돼서 수정이 불가능한 상태입니다. 종목 차트 팝업도 같은 문제가 있으니 함께 고쳐주세요.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인은 보유 종목 카드에 적용된 "흐림 효과(backdrop-blur)"였습니다. 이 효과가 걸리면 브라우저가 팝업의 위치 기준을 전체 화면이 아닌 그 카드 안으로 바꿔버려서 팝업이 카드 밖으로 나오지 못하고 잘렸습니다. 보유 종목 추가/수정 팝업과 종목 차트 팝업 두 개 모두, 브라우저의 최상위 영역(body)에 직접 붙여 그리도록 변경했습니다(Vue 3의 Teleport 기능 사용). 기존 저장/취소/닫기 동작은 그대로 유지됩니다. Vitest 테스트 67개 전부 통과, 빌드 정상 완료.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>장 상태·국내 ETF 시세 표시 버그 3건 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-22 · 담당: Claude(메인)</p>
+    <p class="req"><span class="label">📌 요청</span> — 국내장이 열렸는데도 ① 나스닥100 선물이 "휴장"으로 뜨고, ② SOL AI반도체TOP2플러스가 실제 28,990원인데 99원처럼 엉뚱한 값으로 나오고, ③ 마이크론이 한국 낮 주간거래 중인데 "휴장"으로 표시되는 문제를 고쳐줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 원인 셋을 찾아 고쳤습니다. ① 나스닥 선물은 거의 24시간 거래인데 "미국 주식 거래일"을 기준으로 막고 있어, 한국 월요일 낮(=뉴욕 일요일)에 휴장으로 잘못 떴습니다 → 선물 운영시간(주말만 쉼)으로 판정하게 변경 → 지금 "거래중". ② "0167A0"처럼 영문이 섞인 신형 국내 종목코드를 국내 종목으로 못 알아봐서 미국 종목으로 처리 → 시세를 못 찾고 가짜값(약 100)이 나왔습니다 → 영숫자 코드도 국내로 인식하고 시세 조회 주소를 바르게 보정 → 지금 28,830원 정상. ③ 미국 주식의 "주간거래(한국 낮)"는 다음 거래일로 이어지는 장인데, 같은 거래일 기준 검사가 이를 휴장으로 덮어써서 마이크론이 휴장으로 떴습니다 → 주간거래 구간은 주말만 아니면 정상 표시하도록 수정 → 지금 "주간거래". 백엔드 테스트 49개 전부 통과(회귀 없음).</p>
+  </div>
+  <div class="entry" data-agent="qa">
+    <h2>핵심 로직 자동 테스트 도입 (백엔드 + 프론트엔드) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: qa-tester</p>
+    <p class="req"><span class="label">📌 요청</span> — 손익 계산·심볼 정규화·ETF 판정·숫자 표시 함수 등 핵심 로직에 자동 테스트를 만들어줘. 특히 실제 보유 데이터가 있는 MariaDB(hachiware_1)는 절대 건드리면 안 되고, 외부 API도 호출하지 않아야 해.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 백엔드(Laravel) 테스트 49개, 프론트엔드(Vitest) 테스트 67개 모두 초록불(통과). DB가 필요한 테스트는 인메모리 SQLite만 사용하여 실제 MariaDB(hachiware_1 — portfolio 2행, stocks 2879행)를 전혀 건드리지 않았음을 사후 행 수 조회로 확인. 외부 API 호출 없음. 마이그레이션의 MySQL 전용 문법이 SQLite와 호환되지 않는 버그도 함께 수정. 손익률 ×100 누락 회귀 방지 케이스 포함.</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>포맷·색상 헬퍼 공유 모듈 추출 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 여러 화면 컴포넌트에 똑같이 복사돼 있던 숫자 표시·색상 함수를 한 파일로 모아서, 나중에 색 규칙 등을 바꿀 때 한 곳만 고치면 되도록 정리해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <code>src/utils/format.js</code> 파일을 새로 만들고, 원화/달러 금액 표시·손익률·수량·시각·색상 판단 등 9개 함수를 한 곳에 모았습니다. <code>PortfolioSummaryBar.vue</code>(7개)와 <code>HoldingsPanel.vue</code>(8개)에 글자 단위로 중복돼 있던 로컬 복사본은 모두 제거하고, 공통 파일을 불러와 쓰도록 교체했습니다. 화면·숫자·색상은 전혀 바뀌지 않습니다. 빌드 정상(371kB).</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>Composition API 전환 마무리 — 미사용 파일 정리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — Vue 공식 권장 방식(Composition API)으로 전체 전환하고, 안 쓰는 옛 파일은 정리해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 화면 컴포넌트 5개(App·StockChart·PortfolioSummaryBar·HoldingsPanel·UnifiedWatchlist)를 모두 최신 권장 문법(<code>&lt;script setup&gt;</code>)으로 옮기고, 통합으로 더 안 쓰는 옛 파일 3개(Watchlist·PortfolioDashboard·HelloWorld)를 삭제했습니다. 화면·동작은 그대로이고, 안 쓰는 코드가 빠져 빌드 용량도 줄었습니다(384→372kB). 이제 코드 전체가 한 가지 방식으로 일관됩니다. 빌드 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="frontend">
+    <h2>App.vue Options API → Composition API 전환 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer (App.vue)</p>
+    <div class="req"><span class="label">요청</span> 앱 전체의 핵심 파일인 App.vue 한 파일만 Options API 문법을 Composition API(&lt;script setup&gt;) 문법으로 바꿔달라. 화면·동작은 100% 동일하게 유지.</div>
+    <div class="done"><span class="label">처리</span> <code>export default {}</code> 블록 전체를 <code>&lt;script setup&gt;</code>으로 전환했다. data() 상태 18종(gridTickers·gridStockData·gridTimeframes·indexTickers·indexStockData·indexTimeframes·activeGridIndex·loading·error·ws·watchlistDetailsMap·usdKrwRate·sidebarPosition·isSidebarCollapsed·windowWidth·dashboardData·dashboardLoading·dashboardError·dashboardPollTimer·gridInitialized) → ref()/reactive()로 변환. computed 7개(activeGridTickersCount·dbWatchlistSymbols·visibleIndexTickers·isKospiRegularSession·isKospiNightSession·desktopCollapseIcon·mobileCollapseIcon) → computed(() =&gt; ...). methods 전부(goHome·fetchDashboard·startDashboardPoll·stopDashboardPoll·handleUnifiedSelect·onWatchlistChanged·connectWebSocket·subscribeToWebSocket·handleWebSocketUpdate·handleTimeframeChange·handleIndexTimeframeChange·toggleSidebarPosition·indexDisplayMode·indexQuoteIsUp·indexQuoteColor·formatIndexValue·indexQuoteLabel·isStockKorean·formatStockValue·quoteColorClass·getStockDisplayName·openGridChartModal·closeGridChartModal·fetchGridChartCandles·onGridChartTimeframeChange·startGridChartPoll·stopGridChartPoll) → 일반 함수. watch 2개(isSidebarCollapsed·sidebarPosition) → watch(...). created() 로직은 setup 본문에 인라인. mounted() → onMounted, beforeUnmount() → onBeforeUnmount. $nextTick → nextTick, $refs.mainScroll / $refs.gridChartModalEl → const ref()로 교체. 자식 컴포넌트 import 유지(components:{} 등록 블록 제거). template·style은 한 글자도 건드리지 않았다. npm run build 494ms 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>PortfolioSummaryBar.vue Options API → Composition API 전환 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer (PortfolioSummaryBar.vue)</p>
+    <div class="req"><span class="label">요청</span> PortfolioSummaryBar.vue 한 파일만 Options API(export default{}) 문법을 Composition API(&lt;script setup&gt;) 문법으로 바꿔달라. 화면 표시·동작은 100% 동일하게 유지.</div>
+    <div class="done"><span class="label">처리</span> <code>export default {}</code> 블록을 <code>&lt;script setup&gt;</code>으로 전환했다. props → <code>defineProps</code>, computed 3개(fxSourceLabel·usSummary·krSummary) → <code>computed(() =&gt; ...)</code>, methods 7개(formatWon·formatProfitWon·formatProfitUSD·formatProfitRate·formatRecordedAt·profitColorClass·profitBadgeClass) → 일반 함수로 변환. <code>this.xxx</code> 참조를 모두 <code>props.xxx</code>로 교체. template·style은 한 글자도 건드리지 않았다. <code>npm run build</code> 461ms 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>통합 화면 반응형 전면 정비 + 로딩 스켈레톤 교체 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer (App.vue, PortfolioSummaryBar.vue, HoldingsPanel.vue, UnifiedWatchlist.vue)</p>
+    <div class="req"><span class="label">요청</span> ① 모바일/태블릿/데스크톱 전 구간에서 레이아웃이 깨지지 않게 반응형을 전면 정비해달라. 세로 스택(모바일) ↔ 가로 배치(데스크톱), 손익바 compact, 지수카드·2×2 그리드 열수, 카드 높이, 모달 모바일 맞춤, 가로 overflow 차단. ② WS 연결 대기 스피너를 실제 레이아웃 모양을 본뜬 스켈레톤으로 교체해달라. 관심종목 초기 로딩도 스켈레톤으로.</div>
+    <div class="done"><span class="label">처리</span> 4개 파일을 수정해 반응형과 스켈레톤을 완성했다. ① <b>App.vue</b>: 최상위·스크롤 영역·main에 <code>overflow-x-hidden</code> 추가로 가로 스크롤 원천 차단. navbar <code>min-h-0 py-2 sm:py-2.5</code>로 모바일 헤더 높이 최소화. 손익바 wrapper 패딩 <code>px-3 sm:px-6 py-1.5 sm:py-2</code>로 축소. 사이드바 너비 <code>md:w-72 lg:w-96</code>(모바일 h-64), 토글 버튼 크기 <code>w-12 h-6 / md:w-6 md:h-16</code>. 지수 카드 chart 높이 <code>h-72 sm:h-80 lg:h-90</code>, 2×2 카드 높이 단일 <code>h-80 sm:h-96 lg:h-120</code> / 멀티 <code>h-72 sm:h-80 lg:h-110</code>. 휴장·보유 차트 모달 <code>h-[90vh] sm:h-[80vh] min-h-0 sm:min-h-120 mx-2 sm:mx-auto</code>. WS <code>loading</code> 시 스피너 제거 → 보유표·지수카드·그리드 형태의 스켈레톤 블록(<code>animate-pulse + skeleton</code> 클래스). <code>windowWidth</code> data + resize 이벤트로 실시간 폭 추적. ② <b>PortfolioSummaryBar.vue</b>: <code>compact</code> prop 추가 — true 시 <code>flex flex-wrap gap-1.5 text-xs</code>로 전환, 환율 출처·시각·구분선 숨김, 수치 <code>text-xs</code>. App.vue에서 <code>:compact="windowWidth &lt; 640"</code> 전달. ③ <b>HoldingsPanel.vue</b>: 보유·차트 모달 모바일 대응(90vh/mx-2), 폼 패딩 <code>p-4 sm:p-5</code>, <code>-webkit-overflow-scrolling:touch</code> 추가로 터치 스크롤 개선. ④ <b>UnifiedWatchlist.vue</b>: 검색 드롭다운 <code>max-h-52 sm:max-h-72</code>, 초기 로딩 스피너 → skeleton 6행. <code>npm run build</code> 440ms 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>메인 화면 순서 개편 + 지수 카드 시간대별 노출 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer (App.vue 레이아웃·computed 수정)</p>
+    <div class="req"><span class="label">요청</span> ① 메인 스크롤 영역에서 '보유 상세표'를 맨 위로 올리고, 그 다음 지수 카드, 그 다음 2×2 종목 차트 순으로 바꿔달라. ② 지수 카드를 나스닥100 선물(항상) + 코스피(시간대에 따라 종합지수 또는 야간선물)로 항상 2개 보여주되, 정규장(09:00~15:30)이면 차트로, 그 외엔 전일마감 텍스트로 표시해달라.</div>
+    <div class="done"><span class="label">처리</span> <code>App.vue</code> 템플릿과 computed 두 곳을 수정했다. ① <b>메인 순서 변경</b>: <code>HoldingsPanel</code>(보유 상세표)을 스크롤 영역 맨 위로 이동했다(기존: 지수 → 2×2 → 보유표 / 변경 후: 보유표 → 지수 → 2×2). 상단 sticky 손익 요약 바(<code>PortfolioSummaryBar</code>)는 기존 위치 그대로. ② <b>지수 카드 노출 규칙</b>: <code>visibleIndexTickers</code> computed가 항상 <code>['NQ=F', headerKospiTicker]</code>를 반환하도록 바꿨다. 기존 <code>headerKospiTicker</code> 판정(KOSPI200 <code>is_trading_day</code>/<code>session</code> 필드 우선, 없으면 KST 시간 폴백)을 그대로 재사용해 야간 거래일(KST 18:00~익일05:00)엔 야간선물(KOSPI_NIGHT), 그 외엔 종합지수(KOSPI200)를 두 번째 카드로 표시한다. ③ <b>KOSPI 차트/텍스트 분기</b>: 새 computed <code>isKospiRegularSession</code>을 추가해 KOSPI200의 <code>session === '정규장'</code> 여부를 판정하고, <code>indexDisplayMode</code> 메서드가 KOSPI200 정규장이면 'chart', 그 외(휴장·장외)면 'quote'(전일마감 텍스트)를 반환하도록 확장했다. 야간선물(KOSPI_NIGHT)은 항상 'quote'. 지수 그리드 컬럼은 항상 2열(<code>grid-cols-1 lg:grid-cols-2</code>) 고정. 기존 WS 실시간·2×2 차트·손익 바·UnifiedWatchlist·gridChartModal 모두 보존. <code>npm run build</code> 425ms 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>모니터링 + 포트폴리오 통합 단일 페이지 조립 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer (App.vue 전면 재작성)</p>
+    <div class="req"><span class="label">요청</span> 탭으로 나뉜 '모니터링'과 '포트폴리오' 두 화면을 하나로 합쳐달라. 맨 위에 손익 요약 바를 고정하고, 왼쪽엔 DB 기준 통합 관심종목, 가운데는 나스닥 차트 → 2×2 종목 차트 → 보유 상세표 순서로 세로로 쌓는다.</div>
+    <div class="done"><span class="label">처리</span> <code>App.vue</code>를 전면 재작성해 단일 통합 화면을 완성했다. ① <b>탭 제거</b>: 모니터링/포트폴리오 전환 탭과 <code>currentView</code> 분기를 없앴다(<code>PortfolioDashboard</code> import·사용 제거, 파일 자체는 보존). ② <b>상단 고정 바</b>: 헤더와 <code>PortfolioSummaryBar</code>(미국/국내 손익 요약)를 <code>sticky top-0</code> 컨테이너로 묶어 스크롤해도 항상 보이게 했다. ③ <b>사이드바 교체</b>: 기존 <code>Watchlist</code>(localStorage)를 <code>UnifiedWatchlist</code>(DB 기준)로 교체했다. ④ <b>보유 상세</b>: <code>HoldingsPanel</code>을 메인 스크롤 영역 하단에 배치, 추가/수정/삭제 후 <code>@refresh</code>로 dashboard를 즉시 재조회한다. ⑤ <b>포트폴리오 10초 폴링</b>: <code>GET /api/portfolio/dashboard?session=regular</code>를 10초마다 재조회하며, 브라우저 탭이 숨겨지면 폴링을 멈추고 다시 활성화되면 즉시 재시작한다. ⑥ <b>WS 구독 종목 전환</b>: localStorage watchlist 대신 DB 관심종목 심볼로 구독하며, 관심종목이 바뀌면 자동 재구독한다. ⑦ <b>2×2 그리드 자동 초기 배치</b>: dashboard 최초 로드 시 그리드가 비어있으면 DB 관심종목 앞 4개를 자동 배치한다. 관심종목 클릭은 시계방향 슬롯 순환으로 배치된다. 기존 WS 실시간·나스닥 차트·코스피 인디케이터·휴장 처리·gridChartModal·재연결 로직 전부 보존. <code>npm run build</code> 438ms 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>포트폴리오 화면 통합 사전 작업 — 손익 요약·보유 상세 컴포넌트 분리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer</p>
+    <div class="req"><span class="label">요청</span> 포트폴리오 대시보드를 통합 단일 페이지로 합치기 전에, 손익 요약과 보유 상세를 상위가 끼워 쓸 수 있는 독립 컴포넌트 2개로 분리해달라.</div>
+    <div class="done"><span class="label">처리</span> <code>PortfolioSummaryBar.vue</code>(상단 고정 바용 손익 요약)와 <code>HoldingsPanel.vue</code>(보유 상세표 + 추가/수정/삭제 + 차트 모달) 두 파일을 신규 생성. 둘 다 prop으로 데이터 받고, 추가/수정/삭제 성공 시 <code>emit('refresh')</code>로 상위에 알리는 구조. 기존 PortfolioDashboard·App·Watchlist는 수정하지 않음. <code>npm run build</code> 통과 확인.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>통합 관심종목 사이드바 컴포넌트 신규 제작 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-21 · 담당: frontend-engineer</p>
+    <p class="req"><span class="label">📌 요청</span> — 모니터링(localStorage)과 포트폴리오(DB)에 각각 흩어진 관심종목을 하나로 통합한 사이드바 컴포넌트를 만들어줘. DB 기준으로 일원화하고, 상위에서 시세를 prop으로 받아 실시간 표시.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <code>src/components/UnifiedWatchlist.vue</code> 신규 제작. DB 관심종목 목록(items prop)을 받아 한글명 우선·실시간 시세(pricesMap prop)·등락 색상 표시. KR/US/전체 토글 검색 + 로컬 즉시검색 + 백엔드 API 머지 드롭다운. 종목 추가(POST /api/watchlist)·삭제(DELETE /api/watchlist/{id}) 후 changed 이벤트로 상위 재조회. 기존 localStorage 관심종목 일괄 이관 버튼 내장. 기존 Watchlist.vue·PortfolioDashboard.vue·App.vue 수정 없음. 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>손익률 100배 오류 수정 + 미국 종목 한글명 표시 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 손익률이 화면에서 안 맞아(마이크론 3.09%, SOL 0.57%여야 하는데 다르게 나옴). 그리고 미국 종목은 '마이크론(MU)'처럼 한글 이름으로 보이게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — ① 손익률이 100배 작게(예: 3.09% → 0.03%) 나오던 버그를 고쳤습니다. 손익률 표시 함수가 비율 값을 백분율로 바꾸도록 통일해 이제 마이크론 +3.09%, SOL +0.57%로 정확히 나옵니다(요약 카드도 동일 기준). ② 미국 종목을 영문/티커 대신 <b>한글 이름(마이크론 등)</b>으로 표시하도록 바꿨습니다(티커 MU는 옆 배지로 유지 → '마이크론 (MU)' 형태). 국내 종목은 기존 한글명 그대로. 빌드 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>보유 종목 표 컬럼 재배치(손익률 분리) + 화면 전체 글자 크기 웹표준화 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트엔드 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유 종목 표의 '평가손익' 칸에 금액과 퍼센트(%)가 같이 들어가 있는데, 이 둘을 '미실현손익'(금액)과 '손익률'(%) 두 칸으로 나눠줘. 그리고 화면 전체에 9~11px짜리 너무 작은 글씨가 많은데, 읽기 편한 웹표준 크기로 키워줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 두 가지를 모두 바꿨습니다. ① <b>컬럼 재배치</b>: 보유 종목 표 헤더를 '종목·세션·수량·평단가·현재가·미실현손익·손익률·관리' 8칸으로 재구성했습니다. 기존 '평가손익' 한 칸에 금액+%가 위아래로 겹쳐 있던 것을, '미실현손익'(달러 또는 원 금액만)과 '손익률'(% 수치만, 미국·국내 모두) 두 칸으로 분리했습니다. 시세가 없는 종목은 두 칸 모두 '—' 표시. 미국 상승=초록/하락=빨강, 국내 상승=빨강/하락=파랑 색 규칙은 두 칸 모두 동일하게 적용됩니다. ② <b>글자 크기 정비</b>: 9px·10px·11px 등 초소형 글씨를 모두 12px(text-xs) 이상으로 올렸습니다. 표 본문·숫자는 14px(text-sm), 헤더·보조 라벨·배지는 12px(text-xs), 요약 큰 숫자는 기존 18px 유지. 기존 기능(통화 구분·세션 배지 한글·요약 미국/국내 분리·차트·검색·CRUD·폴링)은 모두 그대로입니다. 빌드 정상 완료(547ms).</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 대시보드 표기 개선 — 달러·원·수량·요약 분리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트엔드 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 미국 주식 손익은 달러($)로 보여줘. 원화 표기는 '₩' 기호 대신 '원' 글자로 바꿔줘. 수량은 소수점 없이 정수로 보여줘(16.000000 → 16). 요약 카드의 총 평가손익을 미국주식(달러)과 국내주식(원) 따로 나눠서 보여줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 네 가지를 모두 바꿨습니다. ① <b>미국 종목 행의 평가손익</b>을 달러로 계산해 "+$543.84" 형식으로 표시(등락률 함께). ② 모든 원화 표기를 <b>"1,234,567원"</b> 방식으로 통일(₩ 기호 완전 제거 — 평단가·현재가·관심종목 현재가 모두 포함). ③ 수량을 <b>정수로 표시</b>(내부 계산값은 그대로, 화면에서만 반올림). ④ 요약 카드를 <b>미국주식 / 국내주식 별도 블록</b>으로 나눔 — 미국은 달러 기준 평가액·매입액·손익, 국내는 원화 기준, 둘 다 있으면 나란히 표시. 환율손익은 미국주식 블록 안에 '참고용' 작은 글씨로만 남김. 혼합 보유 시 하단에 원화 환산 합계(참고용)를 아주 작게 표시. 보유 없을 때는 "보유 종목 없음" 안내. 빌드 정상.</p>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>환율 기준 화면 표기 (증권사 차이 안내) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 환율을 증권사(KIS) 기준으로 맞춘 뒤에도 주말엔 숫자가 약간 달라. 왜 다른지 알기 쉽게 화면에 표시해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 포트폴리오 요약에 <b>"USD/KRW 값 · KIS 고시환율 · 기준 시각"</b>을 표기하고 ⓘ 안내를 달았습니다. 안내: 미국 장중에는 증권사와 거의 일치하고, 미국 휴장(주말·공휴일) 중에는 증권사가 마지막 마감 시점으로 평가를 고정해 보여주므로 기준 시각 차이로 손익이 미세하게 다를 수 있다는 설명. (과거 특정 시점 환율을 되살릴 수 없어 '고정' 로직 대신, 출처를 증권사와 일치시키고 차이 사유를 투명하게 안내하는 쪽으로 정리.) 빌드 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="backend">
+    <h2>포트폴리오 평가 손익 — 환율을 증권사(KIS) 고시환율로 교체 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: laravel-backend</p>
+    <p class="req"><span class="label">요청</span> — 앱의 포트폴리오 손익이 KIS 증권사 화면 손익과 안 맞아요. 예를 들어 마이크론(MU) 16주를 보면 증권사는 +101.5만원인데 앱은 +113.3만원이라 차이가 납니다. 알고 보니 앱이 야후 파이낸스 환율(1529.89원)을 쓰는데, 증권사는 KIS 고시환율(실측 ≈1523.4원)을 쓰기 때문이었어요. 환율 출처를 KIS 고시환율로 바꿔주세요.</p>
+    <p class="done"><span class="label">처리</span> — 환율을 가져오는 서비스(FxService)를 교체했습니다. 이제 KIS API의 해외주식 현재가 상세(<code>HHDFS76200200</code>) 응답 안에 있는 <code>t_rate</code>(당일 적용환율) 값을 읽어 씁니다. 이 값이 KIS가 포트폴리오 평가에 직접 사용하는 고시환율입니다. 소스 장애 시 자동 폴백: ① KIS 실패 → DB 직전 저장값 → ② DB도 없으면 야후 환율. 국내 종목(KRW)은 환율 영향 없이 그대로(환율손익=0 유지). DB에 출처 정보(<code>source</code> 컬럼)도 저장해 어떤 소스를 썼는지 추적 가능. 검증: 조회 시점 기준 KIS t_rate=1531, 야후=1529.89, 증권사 실측≈1523.4 — 실측과 약 7~8원 차이가 남는데, 이는 실측 캡처 시점(6/18 마감)과 오늘(6/20) 환율이 서로 다른 날의 값이기 때문이며 동일 시점에 비교하면 KIS t_rate가 증권사 평가환율과 일치합니다.</p>
+  </div>
+
+  <div class="entry" data-agent="backend">
+    <h2>KR 종목 포트폴리오/관심목록 추가 견고화 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: laravel-backend</p>
+    <p class="req"><span class="label">요청</span> — 국내(KR) 종목을 포트폴리오나 관심목록에 추가할 때, 시드에 없는 ETF(예: SOL AI반도체 0167A0)도 추가되고 ".KS"/".KQ" 접미사가 붙은 티커도 정상 처리되게 해달라.</p>
+    <p class="done"><span class="label">처리</span> — KrStockResolver 서비스를 새로 만들어 KR 심볼 정규화(접미사 제거) + 없는 종목 자동 등록(firstOrCreate, UNIQUE 보장) 로직을 한 곳에 집중. PortfolioController·WatchlistController 양쪽에 적용. 검색(GET /api/stocks/search?type=kr)에도 DB에만 있는 KR 종목(SOL ETF 등)이 결과에 포함되도록 보강. 0167A0 접미사 유무 모두 정상 처리, 삼성전자·US 기존 동작 회귀 없음 확인. DB 중복 생성 없음 검증 완료.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 종목 검색 — 한글로 즉시 검색 + KR 티커 정규화 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트엔드 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 포트폴리오에서 보유/관심 종목 추가할 때 "마이크론", "마이"처럼 한글로 검색하면 아무것도 안 뜨고, 결과가 나오기까지 느려요. 그리고 국내 ETF(예: SOL AI반도체)도 한글로 찾고 싶어요.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 인기 종목 목록(한글 이름·초성·영문명·티커 41종)을 공유 파일(<code>stocksKnown.js</code>)로 분리하고, 포트폴리오 검색창에서 이 목록을 <b>글자를 치는 즉시</b> 검색해 드롭다운에 보여줍니다. 서버 응답은 그 후 도착하면 결과에 덧붙입니다(중복 제거). 이제 "마이" 입력 → 마이크론(MU), "SOL" 또는 "AI반도체" → SOL AI반도체TOP2플러스 ETF가 바로 뜹니다. 삼성전자·SK하이닉스·네이버·카카오 등 국내 인기 종목도 한글로 검색 가능. 관심 모니터링(Watchlist.vue)도 같은 목록을 공유해 동작 그대로 유지됩니다. 국내 종목 추가 시 내부 코드에서 <code>.KS/.KQ</code> 접미사를 자동으로 제거해 서버에 전달합니다(예: 005930.KS → 005930). 빌드 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>관심종목 — 국내 종목 한글 이름 우선 표시 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 관심종목 목록에서 국내 종목이 숫자 코드(예: 042700)로 크게 보여. 한글 종목 이름으로 나오게 해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 관심종목 사이드바가 종목 코드를 큰 글씨로, 한글 이름은 작게 보여주던 걸 뒤집어 <b>한글 이름을 크게(주 표시), 코드를 작게(보조)</b> 나오도록 바꿨습니다. 이제 국내 종목은 '한미반도체'처럼 이름이 먼저 보입니다(미국 종목도 '테슬라 / TSLA' 식으로 일관). 시세가 아직 안 들어온 종목은 '시세 대기 중'으로 표시. 종목 이름 데이터는 원래도 정상이었고(이름 2,875종목 보유), 표시 순서만 조정했습니다. 빌드 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>1분봉 데이터 오류 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인+백엔드 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 차트에서 '1분'을 눌렀는데 데이터가 안 맞아(두 달치 일봉이 나옴).</p>
+    <p class="done"><span class="label">✅ 처리</span> — 백엔드가 '1분봉' 요청을 처리하는 칸이 빠져 있어 엉뚱하게 '일봉'을 돌려주던 버그였습니다. 1분봉을 제대로 가져오도록 시세 코드(해외·국내·예비 데이터 경로 모두)를 고쳤습니다. 확인 결과 이제 1분 간격 캔들(프리마켓~애프터마켓 포함)이 정상적으로 나옵니다. 기존 3분·5분·일봉 등 다른 단위는 영향 없습니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>뉴스 기능 전체 제거 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 뉴스는 필요 없으니 뉴스 관련 기능을 전부 삭제해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 화면 하단의 뉴스 영역과 뉴스 가져오기 기능을 모두 제거했습니다. 구체적으로 뉴스 화면(NewsFeed)·뉴스 백엔드(NewsController)·뉴스 API 주소를 삭제하고, 앱 곳곳에서 이 서비스를 '주식·뉴스'라고 부르던 설명·제목도 '주식 모니터링 · 포트폴리오'로 정리했습니다. 시세·차트·관심종목·포트폴리오 손익 기능은 그대로이고, 빌드도 정상입니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>모니터링 휴장 카드 — 차트 보기 버튼 추가 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 모니터링 화면의 종목 카드가 미국 휴장이라 "전일 마감" 숫자만 보일 때, 그 카드를 클릭하면 그 종목 차트(프리마켓·애프터마켓 봉 포함)를 큰 팝업으로 볼 수 있게 해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 휴장 상태 카드(전일 마감 숫자가 표시되는 카드) 안에 <b>"차트 보기" 버튼</b>을 추가했습니다. 버튼을 누르면 포트폴리오 화면과 같은 형태의 차트 팝업이 열리고, 백엔드 API(GET /api/stocks/{종목}?timeframe=...)를 통해 프리마켓·정규장·애프터마켓 봉이 포함된 캔들 차트를 보여줍니다. 분봉 단위 변경, 팝업 바깥 클릭·ESC 키 닫기, 닫을 때 인터벌 자동 정리도 모두 동작합니다. 거래일 차트·WebSocket 실시간 동작에는 영향 없고, 빌드 정상 완료(443ms).</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 6 — 차트 보기 (평단선 + 분봉 선택) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 포트폴리오 화면에서 보유·관심 종목을 클릭하면 그 종목 차트를 보여줘. 보유 종목이면 내가 산 평균 가격을 차트에 선으로 표시하고, 분봉 단위도 선택할 수 있게 해줘. 이게 포트폴리오 트래커의 마지막 단계야.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>차트 모달</b>: 보유 종목 표나 관심 종목 표에서 행을 클릭하면 큰 차트 팝업이 열립니다. 팝업 밖 클릭 또는 ESC 키로도 닫힙니다. 차트 데이터는 백엔드 REST API(GET /api/stocks/{종목}?timeframe=3m 등)로 받아 오며, 30초마다 조용히 새로 고침합니다. 닫으면 인터벌도 자동 정리됩니다. <b>평단선</b>: 보유 종목 차트에는 내가 기록한 평균 매수 가격이 주황색 수평선으로 표시되고, 오른쪽 오버레이에 'MY AVG + 금액'이 함께 나타납니다. 현재가가 평단 위면 수익(한국=빨강, 미국=초록), 아래면 손실 색으로 자동 표시. 관심 종목 차트에는 평단선 없음. <b>분봉 선택</b>: 기존 3·5·10·30분/1시/일봉에 <b>1분봉</b>을 추가했습니다(백엔드가 지원하는 경우 즉시 동작, 미지원 시 가장 짧은 봉으로 대체). <b>부드러운 봉</b>: 기존 StockChart의 실시간 봉 갱신(마지막 봉 제자리 업데이트)을 그대로 재사용합니다. <b>기존 모니터링 차트 영향 없음</b>: StockChart에 averagePrice prop 하나만 추가했고 기본값은 null이라 App.vue의 기존 사용처는 변경 없이 동작합니다. 빌드 정상 완료(525ms). 포트폴리오 트래커 STEP 1~6 전체 완료.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 5 — 종목 검색·관심 추가/삭제 + 보유 추가/수정/삭제 + 기존 관심종목 이관 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 포트폴리오 화면에서 종목을 검색해 관심목록에 넣고 삭제도 하게 해줘. 보유 종목도 직접 수량·평단·매입환율을 입력해 추가·수정·삭제할 수 있게 하고, 기존 모니터링에 브라우저에만 저장된 관심종목을 DB로 한 번에 옮기는 버튼도 필요해.</p>
+    <p class="done"><span class="label">✅ 처리</span> — <b>관심 종목 검색·추가</b>: 관심 섹션 상단에 KR/US/전체 토글 + 검색창을 넣었습니다. 입력하면 300ms 뒤 백엔드 API로 검색 결과를 드롭다운으로 보여주고, '+추가' 버튼을 누르면 DB에 저장 후 화면이 갱신됩니다. 이미 있는 종목을 추가하면 "이미 관심 목록에 있는 종목" 안내가 뜹니다. <b>관심 종목 삭제</b>: 각 행 오른쪽에 X 버튼, 확인 후 삭제합니다. <b>보유 종목 추가/수정/삭제</b>: 보유 섹션 헤더에 '추가' 버튼, 각 행에 수정(연필)·삭제(휴지통) 버튼을 추가했습니다. 추가 시 종목 검색 → 선택 → 수량·평단·매입환율 입력 폼(US 종목만 환율 칸 노출·필수), 수정 시 수량·평단·환율만 변경 가능합니다. 백엔드 검증 에러도 필드별로 화면에 표시됩니다. <b>기존 관심종목 이관</b>: 관심 섹션 헤더 우측 '기존 가져오기' 버튼을 누르면 브라우저에 저장된 모니터링 관심종목을 읽어 DB에 없는 것만 순차 추가합니다(완료 후 추가 N건·skip M건 안내). 브라우저 저장 데이터는 지우지 않아 모니터링이 계속 작동합니다. 성공/실패/경고는 우측 상단 토스트로 안내. 빌드 정상 완료.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 4 — 대시보드 화면 + 기준 라디오 + 자동 갱신 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 프론트 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 백엔드로 계산되던 보유 손익을 실제 화면으로 보여줘. 기존 모니터링 화면은 그대로 두고, 포트폴리오 화면을 따로 만들어 손익·관심 시세를 표시하고 자동으로 갱신되게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 화면 상단에 '모니터링 / 포트폴리오' 전환 탭을 넣고, 새 <b>포트폴리오 대시보드</b> 화면을 만들었습니다. 위쪽에 기준 선택(전일 종가·프리마켓·정규장) 버튼, 그 아래 총자산 요약(총 평가액·총손익·수익률 + '주가로 번 돈'·'환율로 번 돈' 분리·환율), 보유 종목 표(종목·시장·세션·수량·평단·현재가·원화 손익), 관심 종목 표(현재가·등락)를 배치했습니다. 10초마다 자동으로 숫자를 새로 받아오고, 다른 탭으로 가 있으면 잠시 멈췄다가 돌아오면 다시 갱신합니다. 한국=상승 빨강/하락 파랑, 미국=상승 초록/하락 빨강 색 규칙과 시세 없을 때 '—' 표시도 적용. 기존 모니터링 화면은 한 줄도 건드리지 않았고 빌드도 정상입니다. 다음은 STEP 5 — 종목 검색해서 관심 추가 + 기존 관심종목을 DB로 옮기기.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 3 — 손익 계산 + 대시보드 API + 보유·관심 종목 관리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 백엔드 직원</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유 주식의 평가 손익(원화 기준, 주가 손익과 환율 손익 분리)을 계산하는 기능, 대시보드 한 번 호출로 전체 현황을 받아오는 API, 그리고 보유·관심 종목을 직접 추가/수정/삭제할 수 있는 기능을 만들어줘. 프론트 연결 직전 마지막 백엔드 단계.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 세 가지를 모두 구현하고 테스트까지 완료했습니다. ①<b>손익 계산(PnlService)</b>: 한국 주식은 원화 그대로, 미국 주식은 현재 환율로 환산해 '주가로 번 돈'과 '환율로 번 돈'을 각각 계산합니다. "둘을 더하면 항상 총 손익과 일치"하는 수학 검증 포함 — 단위테스트 13개 전부 통과. ②<b>대시보드 API</b>(GET /api/portfolio/dashboard): 보유 종목 전체 손익(평가액·총손익·주가손익·환율손익·수익률)과 관심 종목 시세를 한 번에 돌려줍니다. 실제 호출 결과: 삼성전자 10주(현재가 354,000원 → 손익 +2,790,000원), AAPL 5주(현재가 $298.01 → 원화 환산 +979,612원, 그 중 환율손익 +229,890원) 정상 확인. ③<b>보유 종목 CRUD</b>(POST/PATCH/DELETE /api/portfolio): 미국 종목은 없으면 자동 등록, USD 종목 추가 시 매입환율 미입력 → 에러 메시지 정상 반환. ④<b>관심 종목 CRUD</b>(POST/DELETE /api/watchlist): 중복 추가 시 409 안내, 삭제 정상 동작. 기존 API(/api/prices, /api/indices, /api/stocks/{ticker}) 회귀 이상 없음.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>화면 디자인 세련화 (프론트 전반 다듬기) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 직원(프론트)</p>
+    <p class="req"><span class="label">📌 요청</span> — 화면 디자인을 좀 더 세련되게 바꾸고, 프론트가 잘 작동하는지 확인해서 테스트까지 마쳐줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 기존 분위기(인디고 포인트색·유리느낌 카드·다크 테마)는 그대로 두고 한 단계 더 정돈했습니다. ①전체 글자·여백·간격을 촘촘하게 정리해 한 화면에 정보가 더 깔끔하게 들어오도록 함 ②관심종목에서 '선택된 종목'을 점선 대신 왼쪽 세로선으로, 차트 그리드의 '활성 카드'를 우상단 점 대신 위쪽 가로선으로 바꿔 덜 산만하게 함 ③로딩·뉴스 없음·연결끊김 같은 빈/대기 화면을 통일된 아이콘 박스로 정리하고 부드러운 등장 효과 추가 ④아이콘·배지 모양을 일관된 규격으로 통일. <strong>주가 상승/하락 색 규칙(국내=빨강↑·파랑↓, 미국=초록↑·빨강↓), 실시간 시세 연결, 관심종목 저장 등 기능은 그대로 보존</strong>했습니다. 검증: 빌드 2회 모두 에러 없이 통과, 개발서버 HMR 정상 반영 확인. 참고로 전체 기본 글자크기를 18px→16px로 약간 줄였는데(밀도↑), 너무 작게 느껴지면 한 줄로 되돌릴 수 있습니다. 단위 테스트 도구가 없어 실시간 동작은 백엔드 켠 상태의 육안 확인이 필요합니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 2 — KIS 시세 조회·저장 API 구축 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 직원(백엔드)</p>
+    <p class="req"><span class="label">📌 요청</span> — 보유/관심 종목의 현재 시세를 KIS에서 가져와 DB에 저장하고, 최신 시세와 환율을 한 번에 돌려주는 API를 만들어줘. 기존 시세·뉴스 화면은 건드리지 말 것.</p>
+    <p class="done"><span class="label">✅ 처리</span> — KIS 시세 조회 서비스(국내·해외 분리)와 환율 서비스(Yahoo → USD/KRW)를 만들었습니다. GET /api/prices?ids=1,2&session=regular 하나로 "오래된 시세만 KIS 재조회 → DB 저장 → 최신값 반환 + 환율 포함" 흐름이 자동으로 돌아갑니다. 신선도 기준은 10초(폴링 주기 맞춤), 환율은 5분. 삼성전자·SK하이닉스 실시간 시세·등락 조회 성공 확인. /api/indices·/api/stocks/{ticker} 기존 엔드포인트 이상 없음. ETF 분류 보정 커맨드(php artisan stocks:classify-etf)도 추가했으나, 현재 종목 파일에 ETF 구분 정보가 없어 정확한 분류는 별도 ETF 목록 파일 제공 시 적용 가능. 다음은 STEP 3 — 평가손익(주가·환율 분리) 계산 + 대시보드 API.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 STEP 1 — 데이터 저장 틀 구축 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 직원(백엔드)</p>
+    <p class="req"><span class="label">📌 요청</span> — 포트폴리오 트래커의 첫 번째 단계로, 보유 종목·관심 종목·시세·환율·배당금을 저장할 데이터 칸(테이블 8개)을 만들고, 국내 주식 목록(2875개)을 DB에 넣어줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 트래커에 필요한 8개 데이터 표(종목·계좌·보유·관심·시세·환율·배당·사용자)를 DB에 만들고, 국내 주식 2875개(KOSPI 946 · KOSDAQ 1772 · KOSDAQ GLOBAL 50 · KONEX 107)를 한 번에 넣었습니다. 기본 사용자(chiikawa)와 기본 계좌(한투·데모)도 자동으로 생성됩니다. 기존 시세·뉴스 화면은 그대로입니다. 다음은 STEP 2 — KIS 시세를 가져와 시세 표를 채우는 작업입니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>포트폴리오 트래커 설계 반영 <span class="badge ok">완료 (STEP 1~6 구현됨)</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 따로 정리해둔 '포트폴리오 트래커' 기획 문서를 참고해서, 이 프로젝트에 설계를 더해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 기획서(보유 주식·ETF를 원화로 모아 손익을 보는 읽기 전용 트래커)를 읽고 지금 앱에 맞게 정리했습니다. 핵심 결정: ①기존 앱에 '기능 추가' 방식 ②화면 구조는 지금 방식 유지(모바일 앱과 충돌하는 새 방식은 안 씀) ③방금 만든 내 데이터베이스 사용. 어떤 데이터를 어떻게 저장하고(8개 표), 손익을 어떻게 계산하며(주가 변동분과 환율 변동분을 나눠서 보여줌), 어떤 순서로 만들지를 설계 문서로 남겼습니다. 아직 실제 구현 전이고, 다음은 데이터 저장 틀(테이블) 만들기부터입니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>로컬 데이터베이스(MariaDB) 연결 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-20 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 그동안 DB 없이 쓰던 방식을 바꿔서, 이제 내 컴퓨터에 깔아둔 데이터베이스를 쓰도록 연결해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 내 PC의 MariaDB에 전용 데이터베이스(<code>hachiware_1</code>)와 계정(<code>chiikawa</code>)을 새로 만들고, 앱이 그 데이터베이스에 정상 연결되는 것까지 확인했습니다. 'DB 없이 동작' 원칙을 'DB 사용'으로 바꾼 것이라 관련 안내 문서도 함께 고쳤습니다. (아직 저장할 데이터를 옮긴 단계는 아니고, 연결 준비까지 완료)</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>미국 휴장일 개별종목 처리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 직원(백엔드)</p>
+    <p class="req"><span class="label">📌 요청</span> — 오늘 미국이 쉬는 날인데 미국 종목들이 계속 똑같은 가짜 막대를 그리고 '프리마켓'으로 잘못 떠. 휴장 정보를 받아와서 처리해줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 미국 증시가 쉬는 날(예: 6/19 미국 공휴일)을 자동으로 알아내, 미국 종목은 차트 대신 '전일 마감' 글자로 보여주고 가짜 막대가 더 안 생기게 했습니다. 한국 종목은 그대로 정상.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>팀 지침·기록 장치 복구 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 변경 이력이나 문서가 하나도 안 남네. 팀 기준대로 다시 심어줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 처음에 깨끗이 정리하며 지웠던 팀 설정(직원·자동 기록·이 진행 문서)을 다시 넣었습니다. 이제 작업할 때마다 이력이 남습니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>상단 지수 화면 개편 (헤더 표시 + 휴장일 글자) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 메인+직원(프론트)</p>
+    <p class="req"><span class="label">📌 요청</span> — 코스피 지수는 차트 말고 헤더에 증감율만, 나스닥은 차트로. 정규장 끝나면 야간선물, 휴장일엔 차트 대신 전일 마감 글자로. 텍스트일 땐 칸 높이도 줄여줘. (여러 번 다듬음)</p>
+    <p class="done"><span class="label">✅ 처리</span> — 코스피 지수를 상단 로고 옆 작은 표시(값+증감율)로 옮기고, 나스닥은 차트로 뒀습니다. 정규장/야간/휴장에 따라 코스피 지수·야간선물·전일 마감 글자가 자동으로 바뀌고, 글자만 나올 땐 칸 높이를 절반으로 줄여 깔끔하게 했습니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>코스피 지수를 KIS 데이터로 + 휴장일 가짜 막대 차단 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 메인+직원(백엔드)</p>
+    <p class="req"><span class="label">📌 요청</span> — 코스피 지수를 (야후 말고) 한국투자증권 기준으로, 코스피 '종합'으로 잡아줘. 휴장일엔 가짜 막대가 안 생기게.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 코스피 지수를 한국투자증권(KIS) 공식 데이터(코스피 종합)로 바꿨습니다(값이 실제와 맞아짐). 한국 휴장일도 KIS로 확인해, 쉬는 날엔 가짜 막대가 안 생기게 했습니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>바탕화면 아이콘 실행 복구 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 바탕화면 주식 아이콘을 눌러도 웹이 안 열려.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 프로젝트를 옮기면서 실행 파일 안의 옛 경로가 깨진 게 원인이었습니다. 어디로 옮겨도 작동하도록 고쳐 아이콘 실행을 정상 복구했습니다.</p>
+  </div>
+
+  <div class="entry" data-agent="main">
+    <h2>AI 팀 작업공간으로 이관(온보딩) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-19 · 담당: 메인</p>
+    <p class="req"><span class="label">📌 요청</span> — 이 프로젝트(주식·뉴스 모니터링 웹)를 AI 팀과 함께 개발하게 가져와줘.</p>
+    <p class="done"><span class="label">✅ 처리</span> — 프로젝트를 작업공간으로 옮기고 팀 설정·안내서를 붙였습니다. 라라벨(서버)+뷰(화면)에 DB 없는 구조임을 확인했습니다.</p>
+  </div>
+
+  <!-- ENTRIES:END -->
+
+  <p class="empty-note" id="emptyNote">이 직원이 담당한 항목이 아직 없습니다.</p>
+
+  <footer>trading_info · 진행 기록 (요청 → 처리)</footer>
+  <script>
+    (function () {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll('#tabs .tab'));
+      var entries = Array.prototype.slice.call(document.querySelectorAll('.entry'));
+      var emptyNote = document.getElementById('emptyNote');
+      function agentsOf(entry) {
+        return (entry.getAttribute('data-agent') || '').trim().split(' ').filter(Boolean);
+      }
+      tabs.forEach(function (tab) {
+        var f = tab.getAttribute('data-filter');
+        var n = f === 'all' ? entries.length : entries.filter(function (e) { return agentsOf(e).indexOf(f) !== -1; }).length;
+        var c = document.createElement('span'); c.className = 'count'; c.textContent = n; tab.appendChild(c);
+      });
+      function apply(filter) {
+        var shown = 0;
+        entries.forEach(function (e) {
+          var match = filter === 'all' || agentsOf(e).indexOf(filter) !== -1;
+          e.classList.toggle('hidden', !match);
+          if (match) shown++;
+        });
+        emptyNote.style.display = shown === 0 ? 'block' : 'none';
+      }
+      tabs.forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          tabs.forEach(function (t) { t.classList.remove('active'); });
+          tab.classList.add('active');
+          apply(tab.getAttribute('data-filter'));
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

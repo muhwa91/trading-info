@@ -274,6 +274,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import axios from 'axios';
+import { confirm as confirmDialog } from '../composables/useConfirm.js';
 import { localSearch, normalizeKrTicker, SEARCHABLE_STOCKS } from '../stocksKnown.js';
 
 // ── 모듈 스코프 헬퍼 / 상수 ─────────────────────────────────────
@@ -673,7 +674,7 @@ async function addItem(stock) {
 // ── 종목 삭제 ───────────────────────────────────────────────
 async function removeItem(item) {
   if (actionLoading.value) return;
-  if (!confirm(`'${item.displayName}'을(를) 관심 목록에서 삭제할까요?`)) return;
+  if (!await confirmDialog({ message: `'${item.displayName}'을(를) 관심 목록에서 삭제할까요?`, danger: true, confirmText: '삭제' })) return;
 
   actionLoading.value = true;
   try {
@@ -727,9 +728,10 @@ async function migrateLocalStorage() {
     return;
   }
 
-  if (!confirm(
-    `기존 관심종목 ${parsed.length}건 중 ${toAdd.length}건을 DB로 가져올까요?\n(${skipCount}건은 이미 등록됨, skip)`
-  )) return;
+  if (!await confirmDialog({
+    message: `기존 관심종목 ${parsed.length}건 중 ${toAdd.length}건을 DB로 가져올까요?\n(${skipCount}건은 이미 등록됨, skip)`,
+    confirmText: '가져오기',
+  })) return;
 
   migrating.value = true;
   let added = 0;

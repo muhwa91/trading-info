@@ -1,11 +1,11 @@
 <template>
-  <div class="relative bg-base-100/45 backdrop-blur-md border border-base-content/8 rounded-2xl p-3.5 h-full flex flex-col justify-between overflow-hidden">
+  <div class="chart-card-container relative bg-base-100/45 backdrop-blur-md border border-base-content/8 rounded-2xl pt-3.5 pb-3.5 pl-3.5 pr-0 h-full flex flex-col justify-between overflow-hidden">
 
     <!-- 차트 헤더 -->
-    <div class="flex flex-col gap-2 mb-2.5 select-none">
+    <div class="flex flex-col gap-2 mb-2.5 select-none pr-3.5">
       <!-- 1행: 티커·종목명·세션·보조 배지 / 우측 현재가 -->
       <div class="flex items-start justify-between gap-2">
-        <!-- 좌: 종목 정보 -->
+        <!-- 좌: 종목 정보 + (좁을 때) 배지 다음 타임프레임 셀렉트 -->
         <div class="flex items-center gap-1.5 flex-1 min-w-0 flex-wrap">
           <!-- 티커 배지 -->
           <span class="px-2 py-0.5 rounded-md text-[12px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
@@ -26,10 +26,22 @@
             class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
           >실적 {{ earningsDate }}</span>
 
-          <div class="flex-1"></div>
+          <!-- 좁을 때(카드 폭 400px 미만) 배지 다음에 타임프레임 셀렉트 — 남은 폭을 채워 길게 표시 -->
+          <select
+            class="timeframe-select-compact input input-xs bg-base-200/70 border border-base-content/10 rounded-lg font-bold font-mono text-[11px] text-base-content/70 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
+            :value="selectedTimeframe"
+            @change.stop="changeTimeframe($event.target.value)"
+            aria-label="타임프레임 선택"
+          >
+            <option
+              v-for="tf in timeframes"
+              :key="tf.value"
+              :value="tf.value"
+            >{{ tf.label }}</option>
+          </select>
         </div>
 
-        <!-- 우: 현재가 + 등락률 -->
+        <!-- 우: 현재가 + 등락액 -->
         <div class="flex flex-row items-center shrink-0 gap-2">
           <span
             :class="[
@@ -56,9 +68,11 @@
         </div>
       </div>
 
-      <!-- 2행: 타임프레임 선택 -->
-      <div class="flex items-center justify-between border-t border-base-content/6 pt-2">
+      <!-- 2행: 타임프레임 버튼 그리드 (넓은 폭에서만 표시) -->
+      <div class="timeframe-row flex items-center justify-between border-t border-base-content/6 pt-2">
         <span class="text-[9px] text-base-content/35 font-bold uppercase tracking-widest font-mono">Timeframe</span>
+
+        <!-- 버튼 그리드 -->
         <div class="tabs tabs-boxed bg-base-200/70 p-0.5 rounded-lg border border-base-content/6">
           <button
             v-for="tf in timeframes"
@@ -77,15 +91,15 @@
 
     <!-- Chart Canvas Wrapper -->
     <div class="flex-1 w-full relative min-h-[170px] flex" ref="chartWrapper">
-      <!-- Lightweight Chart container (가격축 포함 전체 폭 사용 — 우측 빈 공간 제거) -->
+      <!-- Lightweight Chart container (차트+y축은 래퍼폭 - OVERLAY_GUTTER, 우측 거터에 오버레이 위치) -->
       <div class="h-full w-full" ref="chartContainer"></div>
 
-      <!-- HTS Style Price Axis Label Overlay (Right 80px) -->
+      <!-- HTS Style Price Axis Label Overlay (우측 거터 58px 안에 위치) -->
       <!-- 현재가 오버레이 -->
       <div
         v-if="currentPrice !== null && priceCoordinate !== null"
         :class="[
-          'absolute right-0 z-30 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
+          'absolute right-1 z-30 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
           changePercent >= 0
             ? 'bg-rose-600 border-rose-500 shadow-rose-900/35'
             : 'bg-sky-600 border-sky-500 shadow-sky-900/35'
@@ -93,27 +107,27 @@
         :style="{
           top: priceCoordinate + 'px',
           transform: 'translateY(-50%)',
-          width: '60px',
+          width: OVERLAY_WIDTH + 'px',
           clipPath: 'polygon(7px 0%, 100% 0%, 100% 100%, 7px 100%, 0% 50%)'
         }"
       >
-        <div class="text-[12px] font-black mb-1 tracking-tight">{{ formattedPrice }}</div>
-        <div class="text-[11px] opacity-95">{{ formattedChangePercent }}</div>
+        <div class="text-[11px] font-black mb-1 tracking-tight">{{ formattedPrice }}</div>
+        <div class="text-[10px] opacity-95 whitespace-nowrap">{{ formattedChangePercent }}</div>
       </div>
 
       <!-- 평단가 오버레이 -->
       <div
         v-if="!isIndex && avgPrice !== null && avgPriceCoordinate !== null"
-        class="absolute right-0 z-20 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
+        class="absolute right-1 z-20 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
         :style="{
           top: avgPriceCoordinate + 'px',
           transform: 'translateY(-50%)',
-          width: '60px',
+          width: OVERLAY_WIDTH + 'px',
           clipPath: 'polygon(7px 0%, 100% 0%, 100% 100%, 7px 100%, 0% 50%)'
         }"
       >
-        <div class="text-[11px] font-black mb-1 tracking-tight opacity-90">평단</div>
-        <div class="text-[12px] font-black">{{ isKorean ? Math.round(avgPrice).toLocaleString() : avgPrice.toFixed(2) }}</div>
+        <div class="text-[10px] font-black mb-1 tracking-tight opacity-90">평단</div>
+        <div class="text-[11px] font-black">{{ isKorean ? Math.round(avgPrice).toLocaleString() : avgPrice.toFixed(2) }}</div>
       </div>
     </div>
 
@@ -192,6 +206,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts';
+import { isCoordinateVisible } from '../utils/chartHelpers.js';
 
 // ── props ──────────────────────────────────────────────────────────────────
 const props = defineProps({
@@ -242,6 +257,15 @@ const props = defineProps({
 
 // ── emits ──────────────────────────────────────────────────────────────────
 const emit = defineEmits(['timeframe-change']);
+
+// ── 레이아웃 상수 ─────────────────────────────────────────────────────────
+// 차트 우측 여백(px): 차트는 래퍼폭 - CHART_GUTTER 로 렌더됨. 오버레이(58px)가
+// 차트 우측에 겹쳐 표시되므로 거터를 작게 줘서 차트가 더 넓게 확장되게 한다.
+// CHART_GUTTER(10) + rightPriceScale.width(54) = 64px > OVERLAY_WIDTH(58px)이므로
+// 오버레이 화살표 꼭짓점(58px 지점)이 y축 눈금이 아닌 캔들 영역에 6px 겹쳐 가리킨다.
+const CHART_GUTTER = 10;
+// 오버레이(현재가·평단 배지) 실제 폭(px). right-0 absolute 이므로 차트 폭과 무관.
+const OVERLAY_WIDTH = 58;
 
 // ── 차트 인스턴스 refs (DOM 외 내부 상태) ─────────────────────────────────
 const chartWrapper = ref(null);
@@ -336,7 +360,7 @@ const formattedHeaderAvgPrice = computed(() => {
 
 const formattedChangePercent = computed(() => {
   if (props.changePercent === null) return '0.00%';
-  const sign = props.changePercent >= 0 ? '+ ' : '';
+  const sign = props.changePercent >= 0 ? '+' : '';
   return `${sign}${props.changePercent.toFixed(2)}%`;
 });
 
@@ -425,8 +449,9 @@ function initChart() {
     },
     rightPriceScale: {
       borderVisible: false,
-      // 현재가/평단가 오버레이(62px)가 캔들을 가리지 않고 y축 금액 영역 안에 들어가도록 폭을 맞춤
-      width: 66,
+      // CHART_GUTTER(10) + width(54) = 64 > OVERLAY_WIDTH(58): 화살표 꼭짓점이 캔들 영역에 살짝 걸림
+      // 5자리 숫자(원화 10만원대 이하·미국주식 소수점2자리) 기준 잘림 없음.
+      width: 54,
       scaleMargins: {
         top: 0.1,
         bottom: 0.25
@@ -484,7 +509,8 @@ function initChart() {
   resizeObserver.value = new ResizeObserver((entries) => {
     if (entries.length === 0 || !chart.value) return;
     const { width, height } = entries[0].contentRect;
-    const chartWidth = Math.max(0, width); // 래퍼 전체 폭 사용(가격축 포함) — 우측 빈 공간 제거
+    // 우측 CHART_GUTTER만큼 빼서 차트가 우측으로 더 확장되고, 오버레이(OVERLAY_WIDTH)가 위에 겹치게 함
+    const chartWidth = Math.max(0, width - CHART_GUTTER);
     requestAnimationFrame(() => {
       if (chart.value) {
         chart.value.resize(chartWidth, height);
@@ -595,24 +621,23 @@ function updateCoordinate() {
     return;
   }
 
-  // 현재가 좌표
+  // 차트 캔버스 높이: 상단·하단 클리핑 공통 기준
+  const chartHeight = chartWrapper.value ? chartWrapper.value.clientHeight : Infinity;
+
+  // 현재가 좌표 — 상단(< 0)·하단(> chartHeight) 모두 클리핑
   if (props.currentPrice !== null) {
     const coordinate = candlestickSeries.value.priceToCoordinate(props.currentPrice);
-    if (coordinate === null || coordinate < 0) {
-      priceCoordinate.value = null;
-    } else {
-      priceCoordinate.value = coordinate;
-    }
+    priceCoordinate.value = isCoordinateVisible(coordinate, chartHeight) ? coordinate : null;
   } else {
     priceCoordinate.value = null;
   }
 
   // 최고가 및 평단가 좌표 계산
   if (!isIndex.value && chart.value && props.candles && props.candles.length > 0) {
-    // 평단가 좌표 계산
+    // 평단가 좌표 계산 — 상단·하단 모두 클리핑 (범위 밖이면 오버레이 미노출)
     if (avgPrice.value !== null) {
       const avgCoord = candlestickSeries.value.priceToCoordinate(avgPrice.value);
-      avgPriceCoordinate.value = (avgCoord !== null && avgCoord >= 0) ? avgCoord : null;
+      avgPriceCoordinate.value = isCoordinateVisible(avgCoord, chartHeight) ? avgCoord : null;
     } else {
       avgPriceCoordinate.value = null;
     }
@@ -906,6 +931,42 @@ onBeforeUnmount(() => {
 .glow-active {
   box-shadow: 0 0 8px rgba(16, 185, 129, 0.2);
 }
+
+/* 카드 루트에 컨테이너 컨텍스트 부여 — 자신의 폭을 기준으로 @container 쿼리를 적용 */
+.chart-card-container {
+  container-type: inline-size;
+  container-name: chart-card;
+}
+
+/* 기본(넓은 폭): 헤더 우측 컴팩트 셀렉트 숨김, 2행 타임프레임 row 표시 */
+.timeframe-select-compact {
+  display: none;
+}
+.timeframe-row {
+  display: flex;
+}
+
+/* 카드 폭 400px 미만: 2행 숨기고 배지 다음 컴팩트 셀렉트 표시 */
+@container chart-card (max-width: 399px) {
+  .timeframe-row {
+    display: none;
+  }
+  .timeframe-select-compact {
+    display: inline-block;
+    flex: 0 0 auto;
+    max-width: 5rem;
+    width: 5rem;
+    /* 텍스트 가운데 정렬 */
+    text-align: center;
+    text-align-last: center;
+    /* 네이티브 화살표가 보이도록 appearance 복원 + 좌우 패딩 균형 */
+    appearance: auto;
+    -webkit-appearance: auto;
+    padding-left: 0.375rem;
+    padding-right: 1.25rem;
+  }
+}
+
 .animate-fadeIn {
   animation: fadeIn 0.15s ease-out forwards;
 }
