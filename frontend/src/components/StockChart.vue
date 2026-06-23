@@ -2,44 +2,13 @@
   <div class="chart-card-container relative bg-base-100/45 backdrop-blur-md border border-base-content/8 rounded-2xl pt-3.5 pb-3.5 pl-3.5 pr-0 h-full flex flex-col justify-between overflow-hidden">
 
     <!-- 차트 헤더 -->
-    <div class="flex flex-col gap-2 mb-2.5 select-none pr-3.5">
-      <!-- 1행: 티커·종목명·세션·보조 배지 / 우측 현재가 -->
-      <div class="flex items-start justify-between gap-2">
-        <!-- 좌: 종목 정보 + (좁을 때) 배지 다음 타임프레임 셀렉트 -->
-        <div class="flex items-center gap-1.5 flex-1 min-w-0 flex-wrap">
-          <!-- 티커 배지 -->
-          <span class="px-2 py-0.5 rounded-md text-[12px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
-            {{ ticker }}
-          </span>
-          <!-- 종목명 -->
-          <span class="text-sm font-black text-white/90 leading-tight break-all" :title="name">{{ name }}</span>
-
-          <!-- 최고가 배지 -->
-          <span
-            v-if="!isIndex && maxPrice !== null"
-            class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 shrink-0 leading-tight"
-          >MAX {{ formattedMaxPrice }}</span>
-
-          <!-- 실적 발표일 배지 -->
-          <span
-            v-if="earningsDate"
-            class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
-          >실적 {{ earningsDate }}</span>
-
-          <!-- 좁을 때(카드 폭 400px 미만) 배지 다음에 타임프레임 셀렉트 — 남은 폭을 채워 길게 표시 -->
-          <select
-            class="timeframe-select-compact input input-xs bg-base-200/70 border border-base-content/10 rounded-lg font-bold font-mono text-[11px] text-base-content/70 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
-            :value="selectedTimeframe"
-            @change.stop="changeTimeframe($event.target.value)"
-            aria-label="타임프레임 선택"
-          >
-            <option
-              v-for="tf in timeframes"
-              :key="tf.value"
-              :value="tf.value"
-            >{{ tf.label }}</option>
-          </select>
-        </div>
+    <div class="flex flex-col gap-1.5 mb-2.5 select-none pr-3.5">
+      <!-- 줄1: 티커 배지(좌) / 현재가·등락액(우) -->
+      <div class="flex items-center justify-between gap-2">
+        <!-- 좌: 티커 배지 -->
+        <span class="px-2 py-0.5 rounded-md text-[12px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
+          {{ ticker }}
+        </span>
 
         <!-- 우: 현재가 + 등락액 -->
         <div class="flex flex-row items-center shrink-0 gap-2">
@@ -68,7 +37,40 @@
         </div>
       </div>
 
-      <!-- 2행: 타임프레임 버튼 그리드 (넓은 폭에서만 표시) -->
+      <!-- 줄2: 종목명 — 항상 독립 행 -->
+      <span class="text-sm font-black text-white/90 leading-tight break-all" :title="name">{{ name }}</span>
+
+      <!-- 줄3: MAX 배지 — 비지수·최고가 있을 때만 표시 -->
+      <span
+        v-if="!isIndex && maxPrice !== null"
+        class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 self-start leading-tight"
+      >MAX {{ formattedMaxPrice }}</span>
+
+      <!-- 줄4: 실적 배지(좌) + 컴팩트 타임프레임 셀렉트(우측) -->
+      <!-- 컴팩트(400px 미만): 셀렉트 표시 / 와이드: 셀렉트 숨김. 실적 배지는 폭 무관 표시 -->
+      <div class="flex items-center timeframe-row4">
+        <!-- 실적 발표일 배지 -->
+        <span
+          v-if="earningsDate"
+          class="earnings-badge px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
+        >실적 {{ earningsDate }}</span>
+
+        <!-- 좁을 때(카드 폭 400px 미만) 타임프레임 셀렉트 — 우측 정렬 -->
+        <select
+          class="timeframe-select-compact ml-auto mr-2 input input-xs bg-base-200/70 border border-base-content/10 rounded-lg font-bold font-mono text-[11px] text-base-content/70 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
+          :value="selectedTimeframe"
+          @change.stop="changeTimeframe($event.target.value)"
+          aria-label="타임프레임 선택"
+        >
+          <option
+            v-for="tf in timeframes"
+            :key="tf.value"
+            :value="tf.value"
+          >{{ tf.label }}</option>
+        </select>
+      </div>
+
+      <!-- 와이드용 타임프레임 버튼 그리드 (넓은 폭에서만 표시) -->
       <div class="timeframe-row flex items-center justify-between border-t border-base-content/6 pt-2">
         <span class="text-[9px] text-base-content/35 font-bold uppercase tracking-widest font-mono">Timeframe</span>
 
@@ -90,7 +92,7 @@
     </div>
 
     <!-- Chart Canvas Wrapper -->
-    <div class="flex-1 w-full relative min-h-[170px] flex" ref="chartWrapper">
+    <div class="flex-1 w-full relative min-h-42.5 flex" ref="chartWrapper">
       <!-- Lightweight Chart container (차트+y축은 래퍼폭 - OVERLAY_GUTTER, 우측 거터에 오버레이 위치) -->
       <div class="h-full w-full" ref="chartContainer"></div>
 
@@ -966,18 +968,30 @@ onBeforeUnmount(() => {
   container-name: chart-card;
 }
 
-/* 기본(넓은 폭): 헤더 우측 컴팩트 셀렉트 숨김, 2행 타임프레임 row 표시 */
+/* 기본(넓은 폭): 헤더 우측 컴팩트 셀렉트 숨김, 타임프레임 row 표시 */
 .timeframe-select-compact {
   display: none;
 }
 .timeframe-row {
   display: flex;
 }
+/* 줄4 wrapper: 와이드에서는 셀렉트가 none이므로 기본 숨김.
+   단, 실적 배지(.earnings-badge)가 있으면 표시. */
+.timeframe-row4 {
+  display: none;
+}
+.timeframe-row4:has(.earnings-badge) {
+  display: flex;
+}
 
-/* 카드 폭 400px 미만: 2행 숨기고 배지 다음 컴팩트 셀렉트 표시 */
+/* 카드 폭 400px 미만: 와이드 버튼 행 숨기고 줄4(셀렉트+실적) 표시 */
 @container chart-card (max-width: 399px) {
   .timeframe-row {
     display: none;
+  }
+  /* 줄4 wrapper: 컴팩트에서는 무조건 flex 표시(실적 배지 유무 무관) */
+  .timeframe-row4 {
+    display: flex;
   }
   .timeframe-select-compact {
     display: inline-block;

@@ -81,15 +81,6 @@
   animation: slideInLeft 0.18s ease-out forwards;
 }
 
-/* 사이드바 접힘 토글 버튼: 투명도는 유지하고 링/그림자만 은은히 맥동(주목 유도) */
-@keyframes pulseSoft {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.45), 0 8px 24px rgba(99, 102, 241, 0.40); }
-  50%      { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.0),  0 8px 24px rgba(99, 102, 241, 0.40); }
-}
-.animate-pulse-soft {
-  animation: pulseSoft 1.8s ease-out infinite;
-}
-
 /* ── 카드 공통 hover 리프트 ──────────────────── */
 .card-hover {
   transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;

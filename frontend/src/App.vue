@@ -36,36 +36,6 @@
         </div>
 
         <div class="flex-none flex items-center gap-2">
-          <!-- 사이드바 좌/우 위치 토글 -->
-          <button
-            @click="sidebarPosition = sidebarPosition === 'left' ? 'right' : 'left'"
-            :title="sidebarPosition === 'left' ? '관심종목 사이드바를 오른쪽으로' : '관심종목 사이드바를 왼쪽으로'"
-            aria-label="사이드바 좌우 위치 변경"
-            class="w-8 h-8 flex items-center justify-center rounded-lg text-base-content/55 hover:text-white hover:bg-base-200/60 border border-base-content/8 transition-all duration-200 cursor-pointer shrink-0"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l-3 3 3 3M16 9l3 3-3 3M5 12h14" />
-            </svg>
-          </button>
-
-          <!-- 사이드바 열기/닫기 토글 -->
-          <button
-            @click="isSidebarCollapsed = !isSidebarCollapsed"
-            :title="isSidebarCollapsed ? '관심종목 사이드바 열기' : '관심종목 사이드바 닫기'"
-            :aria-label="isSidebarCollapsed ? '사이드바 열기' : '사이드바 닫기'"
-            :class="[
-              'w-8 h-8 flex items-center justify-center rounded-lg border transition-all duration-200 cursor-pointer shrink-0',
-              isSidebarCollapsed
-                ? 'bg-indigo-600/90 text-white border-indigo-400/40 ring-2 ring-indigo-500/25 hover:bg-indigo-500 animate-pulse-soft'
-                : 'text-base-content/55 hover:text-white hover:bg-base-200/60 border-base-content/8'
-            ]"
-          >
-            <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 5.5A1.5 1.5 0 015.5 4h13A1.5 1.5 0 0120 5.5v13a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 18.5v-13z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 4v16" />
-            </svg>
-          </button>
-
           <!-- WebSocket 상태 필 -->
           <div
             :class="[
@@ -91,7 +61,33 @@
     </div>
 
     <!-- ── 스크롤 영역 (사이드바 + 메인) ── -->
-    <div :class="['flex-1 flex overflow-hidden overflow-x-hidden min-h-0', sidebarPosition === 'right' ? 'flex-col-reverse md:flex-row-reverse' : 'flex-col md:flex-row']">
+    <div :class="['relative flex-1 flex overflow-hidden overflow-x-hidden min-h-0', sidebarPosition === 'right' ? 'flex-col-reverse md:flex-row-reverse' : 'flex-col md:flex-row']">
+
+      <!-- 사이드바 접힘 상태 플로팅 열기 버튼 -->
+      <button
+        v-if="isSidebarCollapsed"
+        @click="isSidebarCollapsed = false"
+        aria-label="관심종목 사이드바 열기"
+        :class="[
+          'absolute top-1/2 -translate-y-1/2 z-30',
+          'flex flex-col items-center justify-center gap-1',
+          'w-6 py-8',
+          'bg-indigo-600/90 text-white border border-indigo-400/40 shadow-lg shadow-indigo-600/25',
+          'hover:bg-indigo-500 hover:w-7 transition-all duration-200 cursor-pointer',
+          sidebarPosition === 'left'
+            ? 'left-0 rounded-r-lg'
+            : 'right-0 rounded-l-lg'
+        ]"
+      >
+        <!-- left 사이드바: 오른쪽으로 펼치는 방향 (chevrons-right) -->
+        <svg v-if="sidebarPosition === 'left'" class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+        </svg>
+        <!-- right 사이드바: 왼쪽으로 펼치는 방향 (chevrons-left) -->
+        <svg v-else class="h-3.5 w-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7M19 19l-7-7 7-7" />
+        </svg>
+      </button>
 
       <!-- UnifiedWatchlist 사이드바 -->
       <aside
@@ -114,9 +110,12 @@
             :selected-ticker="gridTickers[activeGridIndex]"
             :market-sync="gridMarket"
             :grid-order="gridTickers"
+            :sidebar-position="sidebarPosition"
             @select="handleUnifiedSelect"
             @changed="onWatchlistChanged"
             @market-change="onSidebarMarketChange"
+            @collapse="isSidebarCollapsed = true"
+            @toggle-position="sidebarPosition = sidebarPosition === 'left' ? 'right' : 'left'"
           />
         </div>
       </aside>
@@ -191,8 +190,7 @@
             <div
               v-for="ticker in visibleIndexTickers"
               :key="ticker"
-              :class="indexDisplayMode(ticker) === 'chart' ? 'h-72 sm:h-80 lg:h-90' : 'h-60'"
-              class="card bg-base-100/45 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/5 transition-all duration-300 p-4 flex flex-col gap-3 rounded-2xl card-hover"
+              class="h-72 sm:h-80 lg:h-90 card bg-base-100/45 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/5 transition-all duration-300 p-4 flex flex-col gap-3 rounded-2xl card-hover"
             >
               <div class="flex-1 min-h-0">
                 <template v-if="indexStockData[ticker]">
@@ -219,7 +217,7 @@
                       <span>{{ (indexQuoteIsUp(ticker) ? '+' : '') + formatIndexValue(indexStockData[ticker].change_amount) }}</span>
                       <span class="opacity-75">({{ (indexQuoteIsUp(ticker) ? '+' : '') + Number(indexStockData[ticker].change_percent).toFixed(2) }}%)</span>
                     </div>
-                    <span class="text-[10px] font-semibold text-base-content/35 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full bg-base-200/50 border border-base-content/8">{{ indexQuoteLabel(ticker) }}</span>
+                    <span class="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/25">{{ indexQuoteLabel(ticker) }}</span>
                   </div>
                 </template>
                 <div v-else class="h-full flex flex-col items-center justify-center gap-3">
@@ -493,14 +491,10 @@ const sidebarPosition = ref(localStorage.getItem('sidebarPosition') || 'left');
 const isSidebarCollapsed = ref(localStorage.getItem('isSidebarCollapsed') === 'true');
 const indexCollapsed = ref(localStorage.getItem('indexCollapsed') === 'true'); // 지수(나스닥·코스피) 영역 접힘 여부
 const gridMarket = ref(localStorage.getItem('gridMarket') === 'US' ? 'US' : 'KR'); // 하단 그리드 시장 필터(국내/미국)
-const windowWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1024);
-
 // ── 포트폴리오 대시보드 ────────────────────────────────────────
 const dashboardData = ref(null);       // { summary, holdings, watchlist, exchange_rate }
 const dashboardLoading = ref(false);
-const dashboardError = ref(null);
 const dashboardPollTimer = ref(null);
-const gridInitialized = ref(false);    // 초기 2×2 배치 완료 여부
 
 // WS 실시간 가격 맵: 보유종목 심볼 → current_price (폴링과 별개로 실시간 덮어쓰기용)
 // 키는 normalizeTicker() 기준 소문자 코드 (예: "0167a0", "mu")
@@ -526,7 +520,6 @@ const gridChartModal = reactive({
 // ── 이벤트 핸들러 레퍼런스 (beforeUnmount 해제용) ─────────────
 let _onVisibilityChange = null;
 let _gridChartKeyDown = null;
-let _onResize = null;
 let _flashResetTimer = null;
 
 // ── computed ───────────────────────────────────────────────────
@@ -779,17 +772,14 @@ async function fetchDashboard() {
 
     // 그리드를 항상 DB 관심종목과 일치시킨다(관심종목에서 지운 종목은 그리드에서도 사라짐)
     reconcileGridWithWatchlist();
-    gridInitialized.value = true;
 
     // 관심종목 또는 그리드 구성이 바뀌면 WS 재구독
     if (prevSymbols !== nextSymbols || prevGrid !== gridTickers.value.join(',')) {
       subscribeToWebSocket();
     }
 
-    dashboardError.value = null;
   } catch (e) {
     console.error('[fetchDashboard]', e);
-    dashboardError.value = e.message;
   } finally {
     dashboardLoading.value = false;
   }
@@ -1275,12 +1265,6 @@ onMounted(() => {
     }
   };
   document.addEventListener('keydown', _gridChartKeyDown);
-
-  // 반응형 windowWidth 추적
-  _onResize = () => {
-    windowWidth.value = window.innerWidth;
-  };
-  window.addEventListener('resize', _onResize);
 });
 
 onBeforeUnmount(() => {
@@ -1289,7 +1273,6 @@ onBeforeUnmount(() => {
   stopGridChartPoll();
   document.removeEventListener('visibilitychange', _onVisibilityChange);
   document.removeEventListener('keydown', _gridChartKeyDown);
-  window.removeEventListener('resize', _onResize);
   if (_flashResetTimer) clearTimeout(_flashResetTimer);
 });
 </script>

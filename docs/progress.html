@@ -75,6 +75,54 @@
 
   <!-- ENTRIES:START -->
   <div class="entry" data-agent="frontend">
+    <h2>소스 정리 — App.vue 미사용 상태·리스너·HoldingsPanel 미사용 import 제거 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청 →</span> 소스 정리 — 아무 데도 쓰이지 않는 코드 제거 요청</div>
+    <div class="done"><span class="label">처리 →</span> App.vue의 미사용 windowWidth 상태·리사이즈 리스너·dashboardError·gridInitialized와 HoldingsPanel의 미사용 import 제거. 빌드 통과 확인.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>UI 미세조정 — 세션 배지 가시성 개선 + 분봉 셀렉트 우측 정렬 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청 →</span> 지수 카드 하단의 "야간거래/거래중" 세션 배지가 너무 흐려 잘 안 보이니 시안(cyan) 톤으로 진하게 바꿔달라. 그리고 헤더 줄4의 분봉 셀렉트박스를 실적 배지 바로 옆이 아닌 줄 오른쪽 끝으로 밀어 여백을 두고 배치해달라.</div>
+    <div class="done"><span class="label">처리 →</span> App.vue 세션 배지 색을 흐린 회색(opacity 35%)에서 시안 계열(text-cyan-400 / bg-cyan-500/10 / border-cyan-500/25, font-bold)로 변경해 그리드 세션 배지와 색 톤 일치. StockChart.vue 줄4 컨테이너에서 gap 제거 후 셀렉트에 ml-auto mr-2 적용해 실적 배지는 좌측, 셀렉트는 우측(끝에서 8px 여백)으로 분리. 빌드 경고 0건 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>지수·종목 카드 헤더 레이아웃 개선 (카드 높이 일치 + 헤더 줄 구조 정리) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> ① 나스닥(차트)과 코스피 야간선물(숫자) 지수 카드 높이가 달라 들쑥날쑥하니 맞춰 달라. ② 종목 카드 헤더에서 티커·종목명·MAX·실적·셀렉트가 한 줄 flex-wrap에 뒤섞여 카드마다 줄바꿈이 다르니 순서 고정 구조로 바꿔 달라. ③ 분봉 셀렉트박스를 실적 배지 바로 오른쪽에 오도록 옮겨라.</div>
+    <div class="done"><span class="label">처리</span> App.vue 지수 카드 높이를 차트 모드와 같은 크기(h-72/sm:h-80/lg:h-90)로 통일. StockChart.vue 헤더를 줄1(티커+현재가) / 줄2(종목명) / 줄3(MAX 배지) / 줄4(실적+셀렉트) 4줄 고정 구조로 재배치. 줄4는 컴팩트 모드(400px 미만)에서 셀렉트 포함 표시, 와이드에서는 실적 배지가 있을 때만 표시(CSS has() 활용). 와이드 버튼 그리드(timeframe-row)는 기존 그대로 유지. 빌드 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>사이드바 조작 버튼 hover 툴팁 제거 + 플로팅 열기 탭 높이 키우기 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 사이드바 닫기·위치 변경·열기 버튼에 마우스를 올리면 뜨는 브라우저 기본 툴팁(title 속성)을 없애 달라. 스크린리더용 aria-label은 그대로 유지. 추가로 사이드바 접힘 상태의 플로팅 열기 탭을 세로로 더 길쭉하게 만들어 달라.</div>
+    <div class="done"><span class="label">처리</span> UnifiedWatchlist.vue에서 좌/우 위치 토글 버튼의 :title 바인딩과 닫기 버튼의 title="사이드바 닫기"를 제거했다. App.vue에서 플로팅 열기 탭의 title="관심종목 사이드바 열기"를 제거하고 세로 패딩을 py-5에서 py-8로 늘려 탭이 더 길쭉하게 보이도록 했다. aria-label은 모두 유지. 빌드 경고 없이 통과(468ms).</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>사이드바 좌/우 위치 토글 버튼을 앱 헤더에서 관심 종목 사이드바 헤더 안으로 이동 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 앱 상단 헤더에 있던 사이드바 좌/우 위치 토글 버튼을, 관심 종목 사이드바 헤더의 닫기 버튼 왼쪽으로 옮겨 달라.</div>
+    <div class="done"><span class="label">처리</span> App.vue 상단 헤더에서 좌/우 토글 버튼을 제거하고, sidebarPosition prop과 toggle-position 이벤트를 UnifiedWatchlist에 연결했다. UnifiedWatchlist.vue에는 sidebarPosition prop과 toggle-position emit을 추가하고, 닫기 버튼 왼쪽에 양방향 화살표(↔) 아이콘 버튼을 삽입해 클릭 시 부모에 toggle-position을 올려보낸다. 빌드 경고 없이 통과(454ms).</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>사이드바 열기 버튼을 헤더에서 스크롤 영역 가장자리 플로팅 탭으로 이동 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 사이드바가 접혀 있을 때 헤더에 있던 열기 버튼을 없애고, 스크롤 영역의 세로 중앙에 가장자리 탭(플로팅 버튼)으로 옮겨 달라. 사이드바 위치(왼쪽/오른쪽)에 따라 탭 위치와 화살표 방향도 맞춰 달라.</div>
+    <div class="done"><span class="label">처리</span> App.vue 헤더에서 사이드바 열기 버튼을 제거했다. 스크롤 영역 div에 relative를 추가해 절대배치 기준점으로 만들고, v-if="isSidebarCollapsed" 플로팅 버튼을 삽입했다. 위치는 top-1/2 -translate-y-1/2로 세로 중앙, sidebarPosition이 left면 left-0에 오른쪽 모서리만 둥글게, right면 right-0에 왼쪽 모서리만 둥글게 처리했다. 아이콘은 펼치는 방향에 맞게 chevrons-right / chevrons-left로 구분. 인디고 강조 톤(bg-indigo-600/90) 유지. 빌드 경고 없이 통과(481ms).</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>사이드바 헤더 UI 재배치 — 이관 버튼 제거·닫기 버튼 이동·카운트 배지 위치 변경 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 관심 종목 사이드바 헤더에서 "기존 가져오기" 버튼 삭제, 종목 수 배지를 제목 오른쪽으로 이동, 사이드바 닫기 버튼을 헤더 오른쪽에 새로 배치. 상단 헤더의 닫기 버튼은 사이드바가 접혀 있을 때만 보이도록 변경.</div>
+    <div class="done"><span class="label">처리</span> UnifiedWatchlist.vue 헤더에서 "기존 가져오기" 버튼(및 migrating ref·migrateLocalStorage 함수·parseLocalStorageTicker 함수)을 제거. 종목 카운트 배지를 "관심 종목" 제목 바로 오른쪽으로 이동. chevrons-left 아이콘의 닫기 버튼을 헤더 오른쪽에 추가하고 클릭 시 collapse 이벤트를 부모로 emit. App.vue에서 @collapse="isSidebarCollapsed = true"로 수신하고, 상단 헤더의 열기/닫기 토글 버튼은 v-if="isSidebarCollapsed"를 달아 사이드바가 열려 있으면 숨김. 빌드 경고 없이 통과(462ms).</div>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>보유종목 US 종목 손익 이중 표시 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> 정규장(REG_US) 중에 보유종목의 미실현손익·손익률·평가금액 칸이 "총" 줄과 "정규장 …" 줄 두 줄로 이중 표시되는 문제 확인·수정.</div>
+    <div class="done"><span class="label">처리</span> US 종목의 "정규장" 보조 줄을 연장 세션(프리마켓·애프터마켓·주간거래)에서만 보이도록 고쳤다. 정규장·장마감 중엔 현재가가 곧 정규장가이므로 보조 줄이 불필요한데, 기존 조건이 세션을 확인하지 않아 항상 떠 있었다. <code>showUSExtBreakdown(item)</code> 헬퍼를 추가하고 세 곳의 v-if 조건을 교체해 정규장 중엔 한 줄만 나오도록 수정. 빌드 통과.</div>
+  </div>
+  <div class="entry" data-agent="frontend">
     <h2>보유종목 화면 버그 2건 수정 — 통화 토글 고정·모달 종목명 누락 <span class="badge ok">완료</span></h2>
     <p class="meta">2026-06-23 · 담당: frontend</p>
     <div class="req"><span class="label">요청</span> ① 보유종목 미실현손익의 달러/원 토글이 정규장 서브줄("정규장 ±$XX" 표시)에서 달러로 고정되는 버그. ② 보유종목에서 종목 클릭 시 뜨는 차트 모달 헤더에 종목 이름 없이 티커만 나오는 버그.</div>

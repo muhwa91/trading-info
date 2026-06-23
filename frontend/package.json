@@ -21,6 +21,7 @@
     "autoprefixer": "^10.5.0",
     "daisyui": "^5.5.23",
     "postcss": "^8.5.15",
+    "prettier": "^3.8.4",
     "tailwindcss": "^4.3.0",
     "vite": "^8.0.12",
     "vitest": "^4.1.9"

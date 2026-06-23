@@ -186,9 +186,9 @@
                     class="text-sm font-black font-mono inline-block px-1 rounded transition-colors duration-300"
                     :class="[profitColorClass(calcUSDProfit(item), 'us'), flashCellClass(item)]"
                   >{{ fmtUSProfit(item) }}</span>
-                  <!-- 정규장(종가 기준) 손익: (정규장 종가 − 평단) × 수량. 연장 차이 없으면 숨김 -->
+                  <!-- 정규장(종가 기준) 손익: (정규장 종가 − 평단) × 수량. 연장 세션에서만 노출 -->
                   <span
-                    v-if="calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0"
+                    v-if="showUSExtBreakdown(item)"
                     class="text-xs font-bold font-mono block mt-0.5 opacity-75"
                     :class="profitColorClass(calcUSUnrealizedProfit(item), 'us')"
                     title="정규장 종가 기준 손익(증권사 애프터/주간 OFF 와 동일)"
@@ -215,9 +215,9 @@
                     class="text-sm font-extrabold font-mono inline-block px-1 rounded transition-colors duration-300"
                     :class="[profitColorClass(calcUSDProfit(item), 'us'), flashCellClass(item)]"
                   >{{ formatProfitRate(calcUSDProfitRate(item)) }}</span>
-                  <!-- 정규장(종가 기준) 손익률 -->
+                  <!-- 정규장(종가 기준) 손익률: 연장 세션에서만 노출 -->
                   <span
-                    v-if="calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0"
+                    v-if="showUSExtBreakdown(item)"
                     class="text-xs font-bold font-mono block mt-0.5 opacity-75"
                     :class="profitColorClass(calcUSUnrealizedProfit(item), 'us')"
                     title="정규장 종가 기준 손익률(증권사 애프터/주간 OFF 와 동일)"
@@ -240,7 +240,7 @@
               <template v-if="fmtMarketValue(item) !== null">
                 <span class="text-sm font-bold font-mono text-white/70 inline-block px-1 rounded transition-colors duration-300" :class="flashCellClass(item)">{{ fmtMarketValue(item) }}</span>
                 <span
-                  v-if="item.market === 'US' && calcUSExtHoursProfit(item) !== null && calcUSExtHoursProfit(item) !== 0 && fmtRegularMarketValue(item) !== null"
+                  v-if="showUSExtBreakdown(item) && fmtRegularMarketValue(item) !== null"
                   class="text-xs font-mono text-base-content/45 block mt-0.5"
                   title="정규장 종가 기준 평가금액"
                 >정규장 {{ fmtRegularMarketValue(item) }}</span>
@@ -618,7 +618,6 @@ import {
   formatQuantity,
   formatPrice,
   profitColorClass,
-  profitBadgeClass,
   displayName as _displayName,
 } from '../utils/format.js';
 
@@ -1506,6 +1505,18 @@ function calcUSExtHoursProfit(item) {
   const qty      = Number(item.quantity);
   if (isNaN(cur) || isNaN(regClose) || isNaN(qty)) return null;
   return (cur - regClose) * qty;
+}
+
+/**
+ * US 연장 세션(프리/애프터/주간거래)에서만 '정규장(연장분 분리)' 보조 줄을 노출한다.
+ * 정규장(REG_US)·장마감 중엔 current_price == 오늘 정규장가라 분리 줄이 불필요(이중 표시 방지).
+ * live_session 우선 → 없으면 클라이언트 시간 폴백(itemSessionCode 와 동일 로직).
+ */
+function showUSExtBreakdown(item) {
+  if (item.market !== 'US') return false;
+  const ext = calcUSExtHoursProfit(item);
+  if (ext === null || ext === 0) return false;
+  return ['PRE', 'AFT', 'EXT_NIGHT'].includes(itemSessionCode(item));
 }
 
 /**

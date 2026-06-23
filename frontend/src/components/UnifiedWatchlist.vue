@@ -5,7 +5,7 @@
     <Transition name="toast-slide">
       <div
         v-if="toast.show"
-        class="fixed top-4 right-4 z-[200] flex items-center gap-2.5 px-4 py-3 rounded-xl border shadow-lg text-xs font-bold font-mono transition-all duration-300"
+        class="fixed top-4 right-4 z-200 flex items-center gap-2.5 px-4 py-3 rounded-xl border shadow-lg text-xs font-bold font-mono transition-all duration-300"
         :class="toast.type === 'success'
           ? 'bg-emerald-900/90 border-emerald-500/30 text-emerald-300'
           : toast.type === 'warn'
@@ -28,26 +28,33 @@
           <!-- 연결 상태 점 -->
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/60 shrink-0"></span>
           관심 종목
-        </h2>
-        <div class="flex items-center gap-1.5">
-          <!-- localStorage 이관 버튼 -->
-          <button
-            @click="migrateLocalStorage"
-            :disabled="migrating || actionLoading"
-            class="flex items-center gap-1 px-2 py-1 rounded-lg text-amber-400/60 hover:text-amber-300 hover:bg-amber-500/8 border border-amber-500/20 hover:border-amber-500/40 text-xs font-bold transition-all duration-200 cursor-pointer disabled:opacity-40"
-            title="기존 모니터링 관심종목(브라우저 저장)을 DB로 가져오기"
-            aria-label="기존 관심종목 가져오기"
-          >
-            <!-- lucide: Upload -->
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-            </svg>
-            <span class="hidden sm:inline">{{ migrating ? '이관 중...' : '기존 가져오기' }}</span>
-          </button>
           <!-- 종목 카운트 배지 (현재 탭 필터 기준) -->
-          <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold font-mono text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 select-none">
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold font-mono text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 normal-case tracking-normal select-none">
             {{ filteredItems.length }}
           </span>
+        </h2>
+        <div class="flex items-center gap-1.5">
+          <!-- 사이드바 좌/우 위치 토글 버튼 -->
+          <button
+            @click="emit('toggle-position')"
+            aria-label="사이드바 좌우 위치 변경"
+            class="w-7 h-7 flex items-center justify-center rounded-lg text-base-content/45 hover:text-base-content/80 hover:bg-base-200/60 border border-base-content/10 hover:border-base-content/20 transition-all duration-200 cursor-pointer shrink-0"
+          >
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 9l-3 3 3 3M16 9l3 3-3 3M5 12h14" />
+            </svg>
+          </button>
+          <!-- 사이드바 닫기(접기) 버튼 -->
+          <button
+            @click="emit('collapse')"
+            class="w-7 h-7 flex items-center justify-center rounded-lg text-base-content/45 hover:text-base-content/80 hover:bg-base-200/60 border border-base-content/10 hover:border-base-content/20 transition-all duration-200 cursor-pointer shrink-0"
+            aria-label="사이드바 닫기"
+          >
+            <!-- lucide: chevrons-left -->
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M11 17l-5-5 5-5M18 17l-5-5 5-5" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -99,7 +106,7 @@
         <Transition name="fade-slide">
           <div
             v-if="showDropdown && mergedSearchResults.length > 0"
-            class="absolute left-0 right-0 top-full mt-1.5 border border-base-content/10 rounded-xl shadow-2xl z-[100] max-h-52 sm:max-h-72 overflow-y-auto backdrop-blur-xl bg-base-100/97 custom-scrollbar"
+            class="absolute left-0 right-0 top-full mt-1.5 border border-base-content/10 rounded-xl shadow-2xl z-100 max-h-52 sm:max-h-72 overflow-y-auto backdrop-blur-xl bg-base-100/97 custom-scrollbar"
           >
             <!-- 드롭다운 헤더 -->
             <div
@@ -302,23 +309,6 @@ function lookupKoName(ticker, market) {
   return found ? found.koName : null;
 }
 
-/**
- * localStorage 티커 문자열 → { symbol, market } 변환.
- * @param {string} raw
- * @returns {{ symbol: string, market: string }|null}
- */
-function parseLocalStorageTicker(raw) {
-  const t = String(raw || '').trim();
-  if (!t) return null;
-  if (/(\.KS|\.KQ)$/i.test(t)) {
-    return { symbol: t.replace(/(\.KS|\.KQ)$/i, ''), market: 'KR' };
-  }
-  if (/^\d+$/.test(t)) {
-    return { symbol: t, market: 'KR' };
-  }
-  return { symbol: t.toUpperCase(), market: 'US' };
-}
-
 const SEARCH_MODE_OPTIONS = [
   { value: 'kr',  label: '국내' },
   { value: 'us',  label: '미국' },
@@ -375,6 +365,15 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+
+  /**
+   * 사이드바 위치 ('left' | 'right').
+   * 상위(App.vue)에서 내려줌 — 버튼 title 표시에 사용.
+   */
+  sidebarPosition: {
+    type: String,
+    default: 'left',
+  },
 });
 
 const emit = defineEmits([
@@ -386,7 +385,7 @@ const emit = defineEmits([
   'select',
 
   /**
-   * 추가/삭제/이관 성공 후 발행.
+   * 추가/삭제 성공 후 발행.
    * 상위(App.vue)가 GET /api/portfolio/dashboard 를 재조회해 items 를 갱신한다.
    */
   'changed',
@@ -396,6 +395,18 @@ const emit = defineEmits([
    * 상위(App.vue)가 하단 차트 그리드 시장을 연동 전환한다('all'은 무시).
    */
   'market-change',
+
+  /**
+   * 사이드바 헤더의 닫기 버튼 클릭 시.
+   * 상위(App.vue)가 isSidebarCollapsed = true 로 설정한다.
+   */
+  'collapse',
+
+  /**
+   * 좌/우 위치 토글 버튼 클릭 시.
+   * 상위(App.vue)가 sidebarPosition을 전환한다.
+   */
+  'toggle-position',
 ]);
 
 // ── 템플릿 ref ───────────────────────────────────────────────────
@@ -420,7 +431,6 @@ const searchDebounce = ref(null);
 
 // 액션 상태
 const actionLoading = ref(false);
-const migrating = ref(false);
 
 // 인라인 에러 (검색 입력 아래)
 const errorMsg = ref('');
@@ -691,80 +701,6 @@ async function removeItem(item) {
   } finally {
     actionLoading.value = false;
   }
-}
-
-// ── localStorage 이관 (일회성) ──────────────────────────────
-async function migrateLocalStorage() {
-  const raw = localStorage.getItem('watchlist');
-  if (!raw) {
-    showToast('기존 관심종목(모니터링)이 없습니다', 'warn');
-    return;
-  }
-
-  let list;
-  try {
-    list = JSON.parse(raw);
-  } catch {
-    showToast('기존 관심종목 데이터가 올바르지 않습니다', 'error');
-    return;
-  }
-
-  if (!Array.isArray(list) || list.length === 0) {
-    showToast('기존 관심종목이 비어 있습니다', 'warn');
-    return;
-  }
-
-  // 현재 DB 관심종목의 symbol 목록 (중복 방지 사전 필터)
-  const dbSymbols = new Set(
-    (props.items || []).map(w => String(w.symbol).toUpperCase())
-  );
-
-  const parsed = list.map(t => parseLocalStorageTicker(t)).filter(Boolean);
-  const toAdd = parsed.filter(p => !dbSymbols.has(p.symbol.toUpperCase()));
-  const skipCount = parsed.length - toAdd.length;
-
-  if (toAdd.length === 0) {
-    showToast(`전부 이미 DB에 있습니다 (${skipCount}건 skip)`, 'warn');
-    return;
-  }
-
-  if (!await confirmDialog({
-    message: `기존 관심종목 ${parsed.length}건 중 ${toAdd.length}건을 DB로 가져올까요?\n(${skipCount}건은 이미 등록됨, skip)`,
-    confirmText: '가져오기',
-  })) return;
-
-  migrating.value = true;
-  let added = 0;
-  let skipped = skipCount;
-  const errors = [];
-
-  for (const item of toAdd) {
-    try {
-      await axios.post(
-        `${apiBase()}/api/watchlist`,
-        { symbol: item.symbol, market: item.market },
-        { headers: { Accept: 'application/json' } }
-      );
-      added++;
-    } catch (e) {
-      if (e.response?.status === 409) {
-        skipped++;
-      } else {
-        errors.push(item.symbol);
-        console.error('[UnifiedWatchlist] migrateLocalStorage error for', item.symbol, e);
-      }
-    }
-  }
-
-  migrating.value = false;
-
-  const resultMsg = errors.length > 0
-    ? `이관 완료: ${added}건 추가, ${skipped}건 skip, ${errors.length}건 실패(${errors.join(', ')})`
-    : `이관 완료: ${added}건 추가, ${skipped}건 skip`;
-
-  showToast(resultMsg, errors.length > 0 ? 'warn' : 'success');
-  emit('changed');
-  // localStorage는 모니터링이 계속 사용 → 삭제하지 않음
 }
 
 // ── 가격 포맷 ───────────────────────────────────────────────
