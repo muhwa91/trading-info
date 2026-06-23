@@ -192,7 +192,7 @@
                     class="text-xs font-bold font-mono block mt-0.5 opacity-75"
                     :class="profitColorClass(calcUSUnrealizedProfit(item), 'us')"
                     title="정규장 종가 기준 손익(증권사 애프터/주간 OFF 와 동일)"
-                  >정규장 {{ formatProfitUSD(calcUSUnrealizedProfit(item)) }}</span>
+                  >정규장 {{ fmtUSUnrealizedProfit(item) }}</span>
                 </template>
                 <span v-else class="text-sm font-mono text-base-content/20">—</span>
               </template>
@@ -312,7 +312,7 @@
               <span class="px-2 py-0.5 rounded-md text-xs font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider">
                 {{ chartModalItem ? chartModalItem.symbol : '' }}
               </span>
-              <span class="text-sm font-black text-white">{{ chartModalItem ? (chartModalItem.name || chartModalItem.symbol) : '' }}</span>
+              <span class="text-sm font-black text-white">{{ chartModalItem ? displayName(chartModalItem) : '' }}</span>
               <span class="px-1.5 py-0.5 rounded text-xs font-extrabold font-mono border leading-tight text-indigo-400 bg-indigo-500/10 border-indigo-500/20">보유</span>
             </div>
 
@@ -887,6 +887,17 @@ function fmtUSCurrentPrice(item) {
 
 function fmtUSProfit(item) {
   const profit = calcUSDProfit(item);
+  const mode = getCurrencyMode(item.portfolio_id);
+  if (mode === 'KRW') {
+    const won = usdToKrw(profit);
+    return won !== null ? formatProfitWon(won) : formatProfitUSD(profit);
+  }
+  return formatProfitUSD(profit);
+}
+
+// 정규장 종가 기준 손익 포맷 — 통화 토글 반영 (버그#1 수정: 달러 고정 → 토글 적용)
+function fmtUSUnrealizedProfit(item) {
+  const profit = calcUSUnrealizedProfit(item);
   const mode = getCurrencyMode(item.portfolio_id);
   if (mode === 'KRW') {
     const won = usdToKrw(profit);

@@ -74,6 +74,18 @@
   </nav>
 
   <!-- ENTRIES:START -->
+  <div class="entry" data-agent="frontend">
+    <h2>보유종목 화면 버그 2건 수정 — 통화 토글 고정·모달 종목명 누락 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-23 · 담당: frontend</p>
+    <div class="req"><span class="label">요청</span> ① 보유종목 미실현손익의 달러/원 토글이 정규장 서브줄("정규장 ±$XX" 표시)에서 달러로 고정되는 버그. ② 보유종목에서 종목 클릭 시 뜨는 차트 모달 헤더에 종목 이름 없이 티커만 나오는 버그.</div>
+    <div class="done"><span class="label">처리</span> ① 원인: 장외(프리/애프터) 세션 중 나타나는 "정규장 종가 기준 서브줄"이 통화 모드를 무시하고 <code>formatProfitUSD</code>를 직접 호출해 달러로 고정됐음. 해결: <code>fmtUSUnrealizedProfit</code> 함수를 신설해 통화 모드(달러/원 토글 상태)를 반영하도록 수정. 이제 서브줄도 메인 손익줄과 동일하게 토글이 적용됨. ② 원인: 모달 헤더가 <code>item.name</code>을 직접 읽는데, 보유종목 데이터에 <code>name</code>이 없을 때 <code>symbol</code>로만 폴백해 이름이 빠졌음. 해결: <code>displayName(chartModalItem)</code>으로 교체 — 테이블 행과 동일한 방식으로 SEARCHABLE_STOCKS(한글명 매핑)를 거쳐 표시. 빌드 에러 없음(✓ 1.73s).</div>
+  </div>
+  <div class="entry" data-agent="main backend">
+    <h2>나스닥선물 차트 멈춤 + 마이크론 주간거래 평평봉 — 진짜 원인 잡아 해결 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-23 · 담당: main(진단·재시작·검증) / backend(코드 수정)</p>
+    <div class="req"><span class="label">요청</span> 나스닥100 선물(NQ) 차트가 전혀 안 움직이고, 마이크론(MU) 한국투자증권 주간거래 가격 변화가 차트에 반영 안 되는 문제. 전체적으로 차트를 제대로 갱신되게 고치고 테스트도 진행.</div>
+    <div class="done"><span class="label">처리</span> 실제 데이터로 추적해 두 가지 진짜 원인을 잡음. ① <b>나스닥선물 정지</b>: 차트 새로고침 장치가 "직전 저장값을 잠깐 다시 넣어두는 동작"과 "새 값을 가져오는 동작"이 너무 빠른 주기(0.3초)에서 충돌해, 외부(Yahoo)에 새 값을 영원히 안 물어보는 악순환에 빠짐 → 새로고침 직전 옛 값을 비우도록 수정. 더 결정적으로 <b>실시간 서버가 수정 전 옛 코드로 돌고 있었음</b>(서버를 재시작하지 않아 고친 내용이 적용 안 됨) → <b>실시간 서버 재시작</b>으로 적용. 결과: 나스닥 봉이 정상 전진하고 현재가가 실시간으로 출렁임(확인 완료). ② <b>마이크론 주간거래 평평봉</b>: 주간거래 중 증권사 현재가를 잠깐 못 가져오면 <b>옛 가격(24시간 폴백)으로 봉이 계속 평평하게 쌓이던</b> 문제 → 신선한 가격일 때만 봉을 전진시키도록 수정. 거래소/세션 판정 경계(밤 시간 종료 시각)도 세 곳을 한 값으로 통일. 검증: 나스닥 실시간 갱신 육안 확인, 백엔드 자동 테스트 135개 통과. ※ 외부 무료 데이터(Yahoo)는 나스닥선물을 약 10분 지연 제공 — 지연된 채로도 차트는 계속 움직임. ※ 마이크론 주간거래 실시간 재확인은 다음 주간거래 시간(한국시간 오전 9시 이후)에 가능.</div>
+  </div>
   <div class="entry" data-agent="backend">
     <h2>지수 차트 간헐적 수 초 멈칫(케이던스 스파이크) 수정 <span class="badge ok">완료</span></h2>
     <p class="meta">2026-06-23 · 담당: backend</p>

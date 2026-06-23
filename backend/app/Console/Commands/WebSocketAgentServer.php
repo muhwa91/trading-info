@@ -635,18 +635,35 @@ class WebSocketAgentServer extends Command
             }
 
             // freshness 만료 or cold-start → Yahoo HTTP fetch
+            // restoreStaleYahooCache() 가 5초 TTL 로 재주입한 값이 아직 살아있을 수 있다.
+            // Cache::remember 는 캐시 히트 시 클로저를 실행하지 않으므로,
+            // 5초 재주입 값이 히트되면 실제 getYahooChartData() 가 영구 스킵되는 악순환이 된다.
+            // → freshness 만료 시 반드시 원본 캐시를 먼저 제거해 Cache::remember 가 fresh fetch 를 수행하도록 한다.
+            Cache::forget($cacheKey);
+
             try {
                 $request = new Request();
                 $request->query->set('timeframe', $tf);
+                // Cache::forget 으로 재주입 캐시를 제거했으므로
                 // getStockData() 내부의 Cache::remember($cacheKey, TTL, ...) 가
-                // 원본 캐시를 채운다(5초 재주입 값은 이미 expire됐거나 덮어씌워진다).
+                // 반드시 getYahooChartData() 를 호출해 fresh 데이터를 채운다.
                 $this->controller->getStockData($request, $ticker);
 
                 // getStockData() 호출 후 원본 캐시에 저장된 값을 _last 에 영구 백업
+                // ガード: Yahoo 실패 시 getMockStockData() 반환값이 캐시에 저장될 수 있다.
+                // Mock 데이터(source: 'Mock ...')를 _last 에 영구 저장하면, 이후 stale-restore 가
+                // 목 데이터를 계속 재주입해 차트가 고정되므로, source 에 'Mock' 이 포함된 응답은 저장 금지.
+                // 또한 캔들 배열이 비어있는 응답도 저장하지 않는다(cold-start 에러 응답 등).
                 $cachedVal = Cache::get($cacheKey);
                 if ($cachedVal !== null) {
-                    Cache::forever("{$cacheKey}_last", $cachedVal);
-                    Cache::put($freshnessKey, 1, $freshnessTtl);
+                    $decodedForCheck = json_decode($cachedVal->getContent(), true);
+                    $isMock = isset($decodedForCheck['source'])
+                        && str_starts_with((string)$decodedForCheck['source'], 'Mock');
+                    $hasCandles = !empty($decodedForCheck['candles']);
+                    if (!$isMock && $hasCandles) {
+                        Cache::forever("{$cacheKey}_last", $cachedVal);
+                        Cache::put($freshnessKey, 1, $freshnessTtl);
+                    }
                 }
             } catch (\Exception $e) {
                 $this->error("[Yahoo갱신] [{$ticker} {$tf}] " . $e->getMessage());

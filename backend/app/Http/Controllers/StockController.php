@@ -394,18 +394,23 @@ class StockController extends Controller
         $cacheKeyKis       = "kis_realtime_price_us_{$ticker}";
         $fallbackKeyKisUs  = "kis_last_successful_overseas_price_{$ticker}";
         $kisPrice = Cache::get($cacheKeyKis);
+        // KIS 8초 TTL 캐시 히트 여부 — 폴백(24h) 사용 시 false 로 분봉 누적 스킵
+        $isFreshKisPrice = ($kisPrice !== null);
         if ($kisPrice === null) {
             if ($allowStale) {
-                // WS 경로: 동기 fetch 없이 폴백 사용
+                // WS 경로: 동기 fetch 없이 폴백 사용(24h stale)
                 $kisPrice = Cache::get($fallbackKeyKisUs);
+                // 폴백이므로 $isFreshKisPrice 는 false 유지 → 분봉 누적 스킵
             } else {
                 // REST 경로: 동기 fetch 로 갱신(라운드3 이전 동작 복원)
                 $fresh = $this->fetchOverseasPriceFromKis($ticker);
                 if ($fresh !== null) {
                     Cache::put($cacheKeyKis, $fresh, 8);
                     $kisPrice = $fresh;
+                    $isFreshKisPrice = true; // 동기 fetch 성공 → fresh
                 } else {
                     $kisPrice = Cache::get($fallbackKeyKisUs);
+                    // fetch 실패·폴백 → $isFreshKisPrice 는 false 유지
                 }
             }
         }
@@ -422,7 +427,7 @@ class StockController extends Controller
                 
                 if (!$isDaily) {
                     $lastYahooTime = (int)end($content['candles'])['time'];
-                    $accumulated1m = $this->accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime);
+                    $accumulated1m = $this->accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime, $isFreshKisPrice);
 
                     // Yahoo 마지막 봉 시각은 초 단위로 비정렬일 수 있다(예: 10:47:09).
                     // 실시간 누적 봉은 분 정렬(예: 10:47:00)이라, 단순히 '> lastYahooTime' 로
@@ -2234,8 +2239,10 @@ class StockController extends Controller
             return false;
         }
 
-        // 주간거래(20:00~04:00)는 다음 거래일로 이어지는 세션 — 주말만 아니면 개장
-        if ($timeVal >= 2000 || $timeVal < 400) {
+        // 주간거래(20:00~03:30 ET)는 다음 거래일로 이어지는 세션 — 주말만 아니면 개장.
+        // 경계는 getUsSession()/resolveUsSession() 과 동일하게 330(03:30)으로 맞춘다.
+        // 03:30~04:00 는 주간거래 종료~프리마켓 시작 공백 — 봉을 생성하지 않음(isUsMarketTradingToday 로 이관).
+        if ($timeVal >= 2000 || $timeVal < 330) {
             return true;
         }
 
@@ -2384,13 +2391,20 @@ class StockController extends Controller
         return null;
     }
 
-    private function accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime)
+    private function accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime, bool $isFreshKisPrice = true)
     {
         $cacheKey = "kis_accumulated_us_1m_{$ticker}";
         $accumulated = Cache::get($cacheKey, []);
 
         $now = time();
         if (!$this->isUsMarketOpen($now)) {
+            return $accumulated;
+        }
+
+        // KIS 8초 TTL 캐시 미스로 24h 폴백 사용 중 → stale 가격으로 평평봉이 연속 누적되는 것을 방지.
+        // 폴백 가격은 실제 거래가 아니라 KIS 통신 단절 상태를 반영하므로, 새 분봉 누적을 스킵하고
+        // 기존 accumulated 를 그대로 반환한다. 이미 시작된 현재 분봉의 close 도 갱신하지 않는다.
+        if (!$isFreshKisPrice) {
             return $accumulated;
         }
 
