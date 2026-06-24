@@ -11,6 +11,7 @@ use App\Services\FxService;
 use App\Services\MarketSessionService;
 use App\Services\PnlService;
 use App\Services\PriceService;
+use App\Services\Toss\TossStockMaster;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -87,21 +88,24 @@ class DashboardController extends Controller
         'after'   => 'AFT',
     ];
 
-    private PriceService        $priceService;
-    private FxService           $fxService;
-    private PnlService          $pnlService;
+    private PriceService         $priceService;
+    private FxService            $fxService;
+    private PnlService           $pnlService;
     private MarketSessionService $sessionService;
+    private TossStockMaster      $stockMaster;
 
     public function __construct(
         PriceService $priceService,
         FxService $fxService,
         PnlService $pnlService,
-        MarketSessionService $sessionService
+        MarketSessionService $sessionService,
+        TossStockMaster $stockMaster
     ) {
         $this->priceService   = $priceService;
         $this->fxService      = $fxService;
         $this->pnlService     = $pnlService;
         $this->sessionService = $sessionService;
+        $this->stockMaster    = $stockMaster;
     }
 
     /**
@@ -141,6 +145,28 @@ class DashboardController extends Controller
             } catch (\Throwable $e) {
                 Log::error('[DashboardController] PriceService 오류: ' . $e->getMessage());
                 $prices = $this->priceService->latest($allStockIds, $session);
+            }
+        }
+
+        // ── 2-1. 종목 마스터 배치 워밍 (N+1 방지) ───────────────────
+        // 보유·관심 전 종목 심볼을 한 번에 TossStockMaster::getInfoBatch 로 캐싱.
+        // 이후 $stock->name / $stock->type / $stock->currency accessor 는 모두 캐시 히트.
+        $allSymbols = [];
+        foreach ($holdings as $holding) {
+            if ($holding->stock !== null) {
+                $allSymbols[] = $holding->stock->symbol;
+            }
+        }
+        foreach ($watchlistItems as $item) {
+            if ($item->stock !== null) {
+                $allSymbols[] = $item->stock->symbol;
+            }
+        }
+        if (!empty($allSymbols)) {
+            try {
+                $this->stockMaster->getInfoBatch(array_unique($allSymbols));
+            } catch (\Throwable $e) {
+                Log::warning('[DashboardController] 종목 마스터 워밍 실패 (graceful): ' . $e->getMessage());
             }
         }
 

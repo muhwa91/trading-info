@@ -4,9 +4,11 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use App\Http\Controllers\StockController;
-use App\Services\KisParallelPriceFetcher;
+use App\Services\Toss\TossPriceFetcher;
+use App\Services\Toss\TossSymbolMapper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class WebSocketAgentServer extends Command
 {
@@ -27,7 +29,8 @@ class WebSocketAgentServer extends Command
     private $clients = [];
     private $clientStates = [];
     private $controller;
-    private $parallelFetcher;
+    private $tossPriceFetcher;
+    private $tossSymbolMapper;
     private $noClientsTime = null;
     private $hasConnected = false;
 
@@ -39,8 +42,10 @@ class WebSocketAgentServer extends Command
     public function __construct()
     {
         parent::__construct();
-        $this->controller     = app(StockController::class);
-        $this->parallelFetcher = app(KisParallelPriceFetcher::class);
+        $this->controller      = app(StockController::class);
+        // Phase 3: 국내 현재가 갱신용 토스 페처
+        $this->tossPriceFetcher = app(TossPriceFetcher::class);
+        $this->tossSymbolMapper = app(TossSymbolMapper::class);
     }
 
     /**
@@ -326,31 +331,22 @@ class WebSocketAgentServer extends Command
 
         $sendElapsed = round((microtime(true) - $sendStart) * 1000);
 
-        // 5. ── 전송 후 KIS 현재가 갱신 ──────────────────────────────────────────
-        //    전송 완료 후 KIS 를 병렬 조회해 캐시를 갱신한다.
-        //    → 다음 사이클(3초 후) 전송 시 최신 가격이 반영된다.
-        //    → 이 fetch 가 타임아웃(2.5초)으로 실패해도 TTL 8초 내 기존 캐시가 유효.
+        // 5. ── 전송 후 현재가 갱신 ────────────────────────────────────────────
+        //    Phase 4: 국내(KR)+미국(US) 모두 토스 배치로 통합.
+        //    KIS 미국 병렬 조회 제거 — 토스 /prices 가 혼합 심볼 OK.
+        //    전송 완료 후 갱신 → 다음 사이클(3초 후) 전송에 반영.
         $allTickers = array_unique(array_column(array_values($uniquePairs), 'ticker'));
         $kisStats   = ['fetched' => 0, 'cached' => 0, 'failed' => 0];
 
+        // 5a. 국내+미국 종목 → 토스 배치 갱신 (지수는 TossPriceFetcher 내부 skip)
         try {
-            $apiUrl    = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-            $appKey    = env('KIS_APP_KEY', '');
-            $appSecret = env('KIS_APP_SECRET', '');
-            $token     = Cache::get('kis_access_token', '');
-
-            if ($token !== '' && $appKey !== '' && $appKey !== 'your_app_key_here') {
-                $kisStats = $this->parallelFetcher->fetchAll(
-                    $allTickers,
-                    $apiUrl,
-                    $appKey,
-                    $appSecret,
-                    $token
-                );
-            }
+            $tossStats = $this->tossPriceFetcher->fetchDomestic($allTickers);
+            Log::debug('[WS] 토스 KR+US 배치 갱신', $tossStats);
         } catch (\Exception $e) {
-            $this->error("[KIS갱신] 오류: " . $e->getMessage());
+            $this->error("[토스배치갱신] 오류: " . $e->getMessage());
         }
+
+        // 5b. KIS 미국 갱신 제거 (Phase 4 → 토스로 통합, Phase 5 → KIS 완전 제거)
 
         $kisElapsed = round((microtime(true) - $sendStart) * 1000) - $sendElapsed;
 
@@ -369,7 +365,7 @@ class WebSocketAgentServer extends Command
 
         $this->info(
             sprintf(
-                "[사이클] 종목 %d개 — stale복원 %dms / 전송 %dms / KIS %dms / Yahoo갱신 %dms / 합계 %dms",
+                "[사이클] 종목 %d개 — stale복원 %dms / 전송 %dms / 현재가갱신 %dms / Yahoo갱신 %dms / 합계 %dms",
                 $tickerCount,
                 $staleRestoreElapsed,
                 $sendElapsed,
@@ -398,18 +394,12 @@ class WebSocketAgentServer extends Command
             }
         }
 
-        // ── 병렬 선조회: KIS 현재가를 모두 캐시에 채운 뒤 순차 전송 ──────────
+        // ── 선조회: 캐시에 채운 뒤 순차 전송 ──────────
+        // Phase 4: 국내+미국 모두 토스 배치로 통합. KIS 미국 선조회 제거.
         try {
-            $apiUrl    = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-            $appKey    = env('KIS_APP_KEY', '');
-            $appSecret = env('KIS_APP_SECRET', '');
-            $token     = Cache::get('kis_access_token', '');
-
-            if ($token !== '' && $appKey !== '' && $appKey !== 'your_app_key_here') {
-                $this->parallelFetcher->fetchAll($validTickers, $apiUrl, $appKey, $appSecret, $token);
-            }
+            $this->tossPriceFetcher->fetchDomestic($validTickers);
         } catch (\Exception $e) {
-            $this->error("[pushDataToClient 병렬선조회] 오류: " . $e->getMessage());
+            $this->error("[pushDataToClient 토스KR+US선조회] 오류: " . $e->getMessage());
         }
 
         foreach ($validTickers as $ticker) {
@@ -430,7 +420,7 @@ class WebSocketAgentServer extends Command
                 ]);
                 @fwrite($socket, $this->encode($payload));
 
-                // ★ usleep 완전 제거 — 레이트리밋은 KisParallelPriceFetcher 동시성 상한이 담당
+                // ★ usleep 완전 제거 — 레이트리밋은 토스 배치 페처가 내부 처리
             } catch (\Exception $e) {
                 $this->error("즉시 전송 실패 [{$ticker} {$tf}]: " . $e->getMessage());
             }

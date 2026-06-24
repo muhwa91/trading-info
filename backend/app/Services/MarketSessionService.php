@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Services\Toss\TossApiClient;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -18,6 +19,13 @@ use Illuminate\Support\Facades\Log;
  */
 class MarketSessionService
 {
+    private TossApiClient $tossApiClient;
+
+    public function __construct(TossApiClient $tossApiClient)
+    {
+        $this->tossApiClient = $tossApiClient;
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Public API
     // ──────────────────────────────────────────────────────────────────────────
@@ -153,174 +161,94 @@ class MarketSessionService
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * 주어진 timestamp 가 KRX 거래일인지 KIS 국내휴장일조회 API(CTCA0903R)로 판정.
+     * 주어진 timestamp 가 KRX 거래일인지 토스 마켓캘린더 API 로 판정.
      *
-     * Cache 키 `kis_trading_day_{Ymd}` 는 StockController 와 공유된다.
-     * API 설정(KIS_APP_KEY) 이 없으면 평일 여부로 폴백.
+     * Cache 키 `kis_trading_day_{Ymd}` 는 하위 호환을 위해 유지한다.
+     * API 실패 시 폴백: 주말 + 고정공휴일 판정 (TTL 30분, API 회복 시 갱신).
      */
     public function isKrTradingDay(int $timestamp): bool
     {
         $dt = new \DateTime("@{$timestamp}");
         $dt->setTimezone(new \DateTimeZone('Asia/Seoul'));
         $dateStr  = $dt->format('Ymd');
-        $cacheKey = "kis_trading_day_{$dateStr}";
+        $cacheKey = "kis_trading_day_{$dateStr}"; // 캐시 키 하위 호환 유지
 
         $cached = Cache::get($cacheKey);
         if ($cached !== null) {
             return (bool)$cached;
         }
 
-        // KIS 국내휴장일조회 — 한 번에 여러 날짜를 받아 함께 캐싱
-        $opened = $this->fetchKisOpenedDays($dateStr);
+        // 토스 캘린더로 배치 조회 (앞뒤 7일)
+        $opened = $this->fetchTossOpenedDays($dateStr);
         if (!empty($opened)) {
             foreach ($opened as $d => $isOpen) {
-                Cache::put("kis_trading_day_{$d}", $isOpen, 60 * 60 * 24 * 7); // 7일
+                Cache::put("kis_trading_day_{$d}", $isOpen, 60 * 60 * 24 * 7);
             }
             if (array_key_exists($dateStr, $opened)) {
                 return $opened[$dateStr];
             }
         }
 
-        // 폴백: API 응답 없을 때만 평일 여부로 판정 (짧게 캐싱해 API 회복 시 갱신)
+        // 폴백: 주말 + 고정공휴일
         $isWeekday = ((int)$dt->format('N')) <= 5;
-        Cache::put($cacheKey, $isWeekday, 60 * 30);
-        return $isWeekday;
+        if (!$isWeekday) {
+            Cache::put($cacheKey, false, 60 * 30);
+            return false;
+        }
+        $mmdd           = $dt->format('md');
+        $fixedHolidays  = ['0101', '0301', '0505', '0815', '1003', '1009', '1225'];
+        $isHoliday      = in_array($mmdd, $fixedHolidays, true);
+        $result         = !$isHoliday;
+        Cache::put($cacheKey, $result, 60 * 30);
+        return $result;
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Internal — KIS holiday API
+    // Internal — Toss market calendar API
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
-     * KIS 국내휴장일조회(CTCA0903R) → [Ymd => 개장여부(bool)] 맵 반환.
+     * 토스 마켓캘린더 API → [Ymd => 거래일여부(bool)] 맵 반환.
      *
-     * opnd_yn(개장일여부) 'Y' 면 거래일.
-     * KIS_APP_KEY 가 설정되지 않았거나 API 오류 시 빈 배열 반환.
+     * baseDateStr 기준 앞뒤 7일치를 한 번에 조회해 여러 날짜를 한 번에 캐싱한다.
+     * API 실패 또는 응답 형식 미인식 시 빈 배열 반환.
      */
-    private function fetchKisOpenedDays(string $baseDateStr): array
+    private function fetchTossOpenedDays(string $baseDateStr): array
     {
-        $apiUrl    = env('KIS_API_URL', 'https://openapi.koreainvestment.com:9443');
-        $appKey    = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-
-        if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-            return [];
-        }
-
         try {
-            $client = new Client();
+            // baseDateStr 기준 앞뒤 7일 범위 조회
+            $baseTs   = mktime(0, 0, 0, (int)substr($baseDateStr, 4, 2), (int)substr($baseDateStr, 6, 2), (int)substr($baseDateStr, 0, 4));
+            $fromDate = date('Ymd', $baseTs - 7 * 86400);
+            $toDate   = date('Ymd', $baseTs + 7 * 86400);
 
-            $doRequest = function (string $token) use ($client, $apiUrl, $appKey, $appSecret, $baseDateStr) {
-                return $client->get("{$apiUrl}/uapi/domestic-stock/v1/quotations/chk-holiday", [
-                    'headers' => [
-                        'content-type' => 'application/json',
-                        'authorization' => "Bearer {$token}",
-                        'appkey'        => $appKey,
-                        'appsecret'     => $appSecret,
-                        'tr_id'         => 'CTCA0903R',
-                        'custtype'      => 'P',
-                    ],
-                    'query' => [
-                        'BASS_DT'       => $baseDateStr,
-                        'CTX_AREA_NK'   => '',
-                        'CTX_AREA_FK'   => '',
-                    ],
-                    'http_errors' => false,
-                ]);
-            };
+            $data = $this->tossApiClient->get('/api/v1/market-calendar/KR', [
+                'from' => $fromDate,
+                'to'   => $toDate,
+            ]);
 
-            $accessToken = $this->getKisAccessToken();
-            $response    = $doRequest($accessToken);
-            $data        = json_decode($response->getBody()->getContents(), true);
-
-            // 토큰 만료(EGW00123) 시 강제 갱신 후 1회 재시도
-            if (isset($data['msg_cd']) && $data['msg_cd'] === 'EGW00123') {
-                $accessToken = $this->getKisAccessToken(true);
-                $response    = $doRequest($accessToken);
-                $data        = json_decode($response->getBody()->getContents(), true);
+            if (empty($data)) {
+                return [];
             }
 
-            $map = [];
-            if (isset($data['output']) && is_array($data['output'])) {
-                foreach ($data['output'] as $row) {
-                    if (isset($row['bass_dt'])) {
-                        $map[$row['bass_dt']] = (($row['opnd_yn'] ?? 'N') === 'Y');
-                    }
-                }
+            // 응답에서 거래일 배열 추출 (키 이름 유연하게)
+            $tradingDays = $data['tradingDays'] ?? $data['openDates'] ?? $data['data']['tradingDays'] ?? null;
+            if (!is_array($tradingDays)) {
+                Log::warning('MarketSessionService: 토스 캘린더 응답 형식 미인식', ['keys' => array_keys($data)]);
+                return [];
+            }
+
+            // 범위 내 모든 날짜에 대해 거래일 여부 맵 생성
+            $map        = [];
+            $tradingSet = array_flip($tradingDays); // YYYYMMDD 키로 빠른 룩업
+            $current    = $fromDate;
+            while ($current <= $toDate) {
+                $map[$current] = isset($tradingSet[$current]);
+                $current = date('Ymd', mktime(0, 0, 0, (int)substr($current, 4, 2), (int)substr($current, 6, 2) + 1, (int)substr($current, 0, 4)));
             }
             return $map;
         } catch (\Exception $e) {
-            Log::error('MarketSessionService: KIS 휴장일 조회 실패: ' . $e->getMessage());
+            Log::error('MarketSessionService: 토스 캘린더 조회 실패: ' . $e->getMessage());
             return [];
-        }
-    }
-
-    /**
-     * KIS OAuth2 액세스 토큰을 캐시에서 가져오거나 신규 발급한다.
-     *
-     * StockController::getAccessToken() 과 동일한 캐시 키(`kis_access_token`)·락(`kis_token_lock`)·
-     * TTL(72000 s)·기본 API URL 을 사용해 두 컴포넌트가 같은 토큰을 공유한다.
-     */
-    private function getKisAccessToken(bool $forceRefresh = false): string
-    {
-        if ($forceRefresh) {
-            Cache::forget('kis_access_token');
-        }
-
-        $token = Cache::get('kis_access_token');
-        if ($token) {
-            return $token;
-        }
-
-        // 동시 다중 요청이 KIS 토큰 API 속도 제한(1 req/min)을 초과하지 않도록 락 사용
-        $lock = Cache::lock('kis_token_lock', 15);
-
-        try {
-            $attempts = 0;
-            while (!$lock->get() && $attempts < 10) {
-                usleep(500_000); // 0.5초 대기
-                $token = Cache::get('kis_access_token');
-                if ($token) {
-                    return $token;
-                }
-                $attempts++;
-            }
-
-            // 락 획득 후 재확인 (다른 프로세스가 이미 갱신했을 수 있음)
-            $token = Cache::get('kis_access_token');
-            if ($token) {
-                return $token;
-            }
-
-            $apiUrl    = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-            $appKey    = env('KIS_APP_KEY');
-            $appSecret = env('KIS_APP_SECRET');
-
-            if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-                throw new \Exception('KIS_APP_KEY 또는 KIS_APP_SECRET 이 설정되지 않았습니다.');
-            }
-
-            $client   = new Client();
-            $response = $client->post("{$apiUrl}/oauth2/tokenP", [
-                'json' => [
-                    'grant_type' => 'client_credentials',
-                    'appkey'     => $appKey,
-                    'appsecret'  => $appSecret,
-                ],
-                'headers' => [
-                    'content-type' => 'application/json',
-                ],
-            ]);
-
-            $data = json_decode($response->getBody()->getContents(), true);
-            if (isset($data['access_token'])) {
-                Cache::put('kis_access_token', $data['access_token'], 72000);
-                return $data['access_token'];
-            }
-
-            throw new \Exception('KIS 액세스 토큰 발급 실패: ' . ($data['msg1'] ?? 'Unknown error'));
-        } finally {
-            $lock->release();
         }
     }
 }

@@ -30,4 +30,10 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'toss' => [
+        'api_url'       => env('TOSS_API_URL', 'https://openapi.tossinvest.com'),
+        'client_id'     => env('TOSS_CLIENT_ID'),
+        'client_secret' => env('TOSS_CLIENT_SECRET'),
+    ],
+
 ];

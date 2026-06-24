@@ -9,11 +9,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * 지수·선물 등락률 계산 / 야간선물 base 코드 — 회귀 테스트 (2026-06-23)
  *
- * 버그 A (수정):
- *   getYahooChartData() 1d 분기에서 NQ=F / KOSPI200 / ^KS200 는
- *   직전 일봉 종가(prev($candles)['close']) 가 아닌
- *   meta previousClose(Yahoo 공식 전일종가)를 prevClose 로 사용해야 한다.
- *   → prev() 일봉 종가가 공식 전일종가와 달라 부호가 뒤집히는 문제 방지.
+ * 버그 A (재수정 2026-06-24):
+ *   getYahooChartData() 1d 분기에서 지수·선물 전일종가는 직전 일봉 종가(prev($candles))를 쓴다.
+ *   chartPreviousClose / meta previousClose 는 range '시작 직전'(이틀 전) 값이라 한 칸 밀려,
+ *   코스피 폭락일에 등락 부호가 뒤집힌다(6/24 코스피 +3.26% 를 -7% 로 오표시) → 사용 금지.
  *
  * 버그 B (수정):
  *   getKOSPINightChartData() 내 getKospiIndexData() 호출 코드 인자가
@@ -33,23 +32,20 @@ class IndexFutureChangePercentTest extends TestCase
     // ──────────────────────────────────────────────────────────────────────
 
     /** @test */
-    public function testOneDayBranchHasIndexFutureInArrayCheck(): void
+    public function testOneDayBranchDoesNotUseChartPreviousCloseMini(): void
     {
         $src = $this->getYahooChartSection();
 
-        // in_array 로 NQ=F 를 포함하는 배열을 검사하는 코드가 있어야 한다
-        $hasInArray = (bool)preg_match(
-            "/in_array\s*\(\s*\\\$ticker\s*,\s*\[/s",
-            $src
-        ) && (bool)preg_match(
-            "/'NQ=F'/",
-            $src
-        );
+        // 2026-06-24 재수정: 지수·선물 1d 등락에 chartPreviousClose mini(range=2d) 요청을 쓰면
+        // range '시작 직전'(이틀 전) 종가가 되어 한 칸 밀린다(코스피 폭락일 +3.26% 를 -7% 로 오표시).
+        // 직전 봉(prev candles)을 써야 하므로 mini 요청은 없어야 한다.
+        $usesMiniChartPrev = (bool)preg_match('/range=2d/', $src)
+            && (bool)preg_match('/chartPreviousClose/', $src);
 
-        $this->assertTrue(
-            $hasInArray,
-            "getYahooChartData() 1d 분기에 in_array(\$ticker, ['NQ=F', ...]) 체크가 없음. " .
-            "지수·선물에 대해 meta previousClose 를 사용하는 분기가 추가되어야 함."
+        $this->assertFalse(
+            $usesMiniChartPrev,
+            "getYahooChartData() 1d 분기에 chartPreviousClose mini(range=2d) 요청이 남아 있음. " .
+            "range 시작 직전(이틀 전) 값이라 전일종가가 한 칸 밀린다. 직전 봉(prev candles)을 써야 함."
         );
     }
 
@@ -121,7 +117,7 @@ class IndexFutureChangePercentTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 5. 야간선물 base — '2001' 사용 확인
+    // 5. 야간선물 base — Yahoo ^KS200 직행 확인 (2026-06-24 Yahoo 전환 후)
     // ──────────────────────────────────────────────────────────────────────
 
     /** @test */
@@ -129,17 +125,18 @@ class IndexFutureChangePercentTest extends TestCase
     {
         $src = $this->getKospiNightSection();
 
-        // getKospiIndexData 호출 인자로 '2001' 이 있어야 한다
-        // ('2001' = 실제 KOSPI200, ~1,477)
-        $hasNewCode = (bool)preg_match(
-            "/getKospiIndexData\s*\([^)]*'2001'/",
+        // 2026-06-24 Yahoo 전환: getKOSPINightChartData 는 getYahooChartData('^KS200', ...) 직행.
+        // getKospiIndexData 경유를 제거하고 Yahoo ^KS200 을 직접 호출해야 한다.
+        $hasYahooKs200 = (bool)preg_match(
+            "/getYahooChartData\s*\(\s*'\\^KS200'\s*,/",
             $src
         );
 
         $this->assertTrue(
-            $hasNewCode,
-            "getKOSPINightChartData() 에서 getKospiIndexData(..., '2001') 를 찾을 수 없음. " .
-            "'2001' = KOSPI200(~1,477)을 base 로 사용해야 야간선물 합성 가격이 정상 범위가 됨."
+            $hasYahooKs200,
+            "getKOSPINightChartData() 에서 getYahooChartData('^KS200', ...) 를 찾을 수 없음. " .
+            "2026-06-24 Yahoo 전환: KIS getKospiIndexData 경유 대신 Yahoo ^KS200 직행으로 변경됨. " .
+            "^KS200 = KOSPI200(~1,477)을 base 로 사용해야 야간선물 합성 가격이 정상 범위가 됨."
         );
     }
 

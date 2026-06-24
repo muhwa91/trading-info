@@ -6,6 +6,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
 class KrxStocksSeeder extends Seeder
@@ -51,37 +52,58 @@ class KrxStocksSeeder extends Seeder
         $chunkSize = 500;
         $total = 0;
 
+        // Phase 7: name·type·currency 컬럼은 마이그레이션으로 제거 예정.
+        // 컬럼 존재 여부를 동적으로 감지해 rows·upsert 갱신 컬럼을 전환한다.
+        // - 컬럼 있음(마이그레이션 실행 전): name/type/currency 포함 upsert
+        // - 컬럼 없음(마이그레이션 실행 후): symbol/market/exchange 만
+        $hasNameColumn = Schema::hasColumn('stocks', 'name');
+
         $chunks = array_chunk($items, $chunkSize);
 
         foreach ($chunks as $chunk) {
             $rows = [];
 
             foreach ($chunk as $item) {
-                $code = $item['code'] ?? '';
-                $name = $item['name'] ?? '';
+                $code   = $item['code'] ?? '';
+                $name   = $item['name'] ?? '';
                 $market = $item['market'] ?? 'KOSPI'; // KOSPI|KOSDAQ|KOSDAQ GLOBAL|KONEX
 
-                if ($code === '' || $name === '') {
+                if ($code === '') {
                     continue;
                 }
 
-                $rows[] = [
-                    'symbol' => $code,
-                    'name' => $name,
-                    'type' => 'stock',  // ETF 구분 데이터 없음 — 주석 참고
-                    'market' => 'KR',
-                    'exchange' => $market,  // KOSPI / KOSDAQ 원문 보존
-                    'currency' => 'KRW',
+                // 마이그레이션 전: name 필드 있음 → 빈 name 행은 스킵
+                if ($hasNameColumn && $name === '') {
+                    continue;
+                }
+
+                $row = [
+                    'symbol'     => $code,
+                    'market'     => 'KR',
+                    'exchange'   => $market,   // KOSPI / KOSDAQ 원문 보존
                     'created_at' => $now,
                     'updated_at' => $now,
                 ];
+
+                // 마이그레이션 전: name·type·currency 컬럼에 값 채움
+                if ($hasNameColumn) {
+                    $row['name']     = $name;
+                    $row['type']     = 'stock'; // ETF 구분 데이터 없음
+                    $row['currency'] = 'KRW';
+                }
+
+                $rows[] = $row;
             }
 
             if (! empty($rows)) {
+                $updateCols = $hasNameColumn
+                    ? ['name', 'exchange', 'updated_at']  // 마이그레이션 전
+                    : ['exchange', 'updated_at'];          // 마이그레이션 후
+
                 DB::table('stocks')->upsert(
                     $rows,
-                    ['symbol', 'market'],          // 고유 키
-                    ['name', 'exchange', 'updated_at'] // 충돌 시 갱신 컬럼
+                    ['symbol', 'market'],  // 고유 키
+                    $updateCols
                 );
                 $total += count($rows);
             }

@@ -39,9 +39,12 @@ class BadTickClampTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // StockController는 MarketSessionService를 생성자에서 받으므로 mock으로 주입.
-        $sessionService = $this->createMock(\App\Services\MarketSessionService::class);
-        $this->controller = new StockController($sessionService);
+        // StockController 생성자: MarketSessionService + TossPriceFetcher + TossCandleProvider + TossStockMaster (Phase 7 추가)
+        $sessionService      = $this->createMock(\App\Services\MarketSessionService::class);
+        $tossPriceFetcher    = $this->createMock(\App\Services\Toss\TossPriceFetcher::class);
+        $tossCandleProvider  = $this->createMock(\App\Services\Toss\TossCandleProvider::class);
+        $stockMaster         = $this->createMock(\App\Services\Toss\TossStockMaster::class);
+        $this->controller = new StockController($sessionService, $tossPriceFetcher, $tossCandleProvider, $stockMaster);
     }
 
     /**

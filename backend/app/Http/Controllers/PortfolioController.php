@@ -203,14 +203,16 @@ class PortfolioController extends Controller
         }
 
         if ($market === 'US') {
-            // 미국 종목: firstOrCreate (lazy 생성)
+            // Phase 7: name·type·currency 는 토스 캐시(TossStockMaster)가 제공.
+            // 마이그레이션 실행 전까지는 NOT NULL 제약을 위해 기본값을 유지하고,
+            // 실행 후에는 컬럼이 사라지므로 자동으로 무해화된다.
             $symbolUpper = strtoupper($symbol);
             return Stock::firstOrCreate(
                 ['symbol' => $symbolUpper, 'market' => 'US'],
                 [
-                    'name'     => $symbolUpper,
-                    'type'     => 'stock',
-                    'currency' => 'USD',
+                    'name'     => $symbolUpper, // 마이그레이션 전 NOT NULL 대비 기본값; 표시명은 TossStockMaster accessor 경유
+                    'type'     => 'stock',       // 동일
+                    'currency' => 'USD',         // 동일
                     'exchange' => null,
                 ]
             );

@@ -141,8 +141,10 @@ class RefreshYahooCacheMockGuardTest extends TestCase
     }
 
     /**
-     * getUsSession(), resolveUsSession(), isUsMarketOpen() 세 메서드 모두
-     * 주간거래 종료 경계로 330 을 사용한다 (3곳 일관성 검증).
+     * getUsSession(), isUsMarketOpen() 두 메서드 모두
+     * 주간거래 종료 경계로 330 을 사용한다 (일관성 검증).
+     *
+     * KisParallelPriceFetcher::resolveUsSession 은 KIS 완전 제거로 파일이 삭제됐으므로 검증 대상에서 제외.
      *
      * @test
      */
@@ -150,7 +152,6 @@ class RefreshYahooCacheMockGuardTest extends TestCase
     {
         $controllerSrc = $this->getControllerSource();
         $sessionSrc    = $this->getMarketSessionServiceSource();
-        $fetcherSrc    = $this->getKisParallelPriceFetcherSource();
 
         // StockController::isUsMarketOpen
         $isOpenSrc = $this->extractMethodSource($controllerSrc, 'isUsMarketOpen');
@@ -168,12 +169,10 @@ class RefreshYahooCacheMockGuardTest extends TestCase
             'MarketSessionService::getUsSession 에 주간거래 경계 330 이 없음'
         );
 
-        // KisParallelPriceFetcher::resolveUsSession
-        $resolveSessionSrc = $this->extractMethodSource($fetcherSrc, 'resolveUsSession');
-        $this->assertStringContainsString(
-            '330',
-            $resolveSessionSrc,
-            'KisParallelPriceFetcher::resolveUsSession 에 주간거래 경계 330 이 없음'
+        // KisParallelPriceFetcher 는 KIS 완전 제거로 삭제됨 — 파일 없음 검증
+        $this->assertFalse(
+            file_exists(__DIR__ . '/../../app/Services/KisParallelPriceFetcher.php'),
+            'KisParallelPriceFetcher.php 가 존재함 — KIS 완전 제거 후 이 파일은 삭제되어야 한다'
         );
     }
 
@@ -205,13 +204,7 @@ class RefreshYahooCacheMockGuardTest extends TestCase
         return (string)$src;
     }
 
-    private function getKisParallelPriceFetcherSource(): string
-    {
-        $path = __DIR__ . '/../../app/Services/KisParallelPriceFetcher.php';
-        $src  = file_get_contents($path);
-        $this->assertNotFalse($src, 'KisParallelPriceFetcher.php 읽기 실패');
-        return (string)$src;
-    }
+    // getKisParallelPriceFetcherSource() 는 KIS 완전 제거(Phase 5)로 삭제됨 — 파일 없음.
 
     /**
      * 소스 파일에서 특정 메서드 블록을 중괄호 카운팅으로 추출한다.

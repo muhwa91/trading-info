@@ -74,6 +74,54 @@
   </nav>
 
   <!-- ENTRIES:START -->
+  <div class="entry" data-agent="backend main">
+    <h2>한국투자증권(KIS) API 완전 제거 — 앱이 토스+야후 2개로 단순화 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: backend main</p>
+    <div class="req"><span class="label">요청 →</span> 토스로 다 옮겼으니 한국투자증권 API를 완전히 걷어내자(야후 폴백 믿고 새벽 실측 없이 진행).</div>
+    <div class="done"><span class="label">처리 →</span> 한투 관련 죽은 코드 파일 3개 삭제, 미국 차트 폴백을 야후로, 한국 휴장일 판정을 한투→토스 달력으로 교체, 한투 토큰·메서드 9개·키 참조 전부 제거. 검증: 미국·국내·지수·환율·코스피 모두 정상, 한투 흔적 0, 테스트 209개 통과, 실시간 서버 안정. 이제 앱은 <b>토스(주력) + 야후(지수·미국폴백) 2개</b>만 사용. (.env의 KIS_* 줄은 삭제 권장 — 코드가 더는 안 읽음)</div>
+  </div>
+  <div class="entry" data-agent="frontend ui-ux">
+    <h2>차트 헤더 레이아웃 정돈 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · frontend</p>
+    <div class="req"><span class="label">요청</span> 차트 카드 헤더 요소들(티커·종목명·MAX·실적·가격)이 제각각 줄에 떠 있어 정렬·계층이 산만함. 정돈 요청.</div>
+    <div class="done"><span class="label">처리</span> 헤더를 좌우 2단(종목 정보 블록 / 가격 블록)으로 재구성. 1행=티커 배지+종목명 같은 줄(baseline), 2행=MAX·실적 보조 배지를 동일 스타일로 그룹화. 두 블록 상단(items-start) 정렬. 배지 크기·padding·radius·폰트 통일. 종목명 truncate+title 유지. 빌드 통과.</div>
+  </div>
+  <div class="entry" data-agent="backend main">
+    <h2>미국 종목 현재가를 한국투자증권 → 토스로 전환 (한투 제거 준비) <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: backend main</p>
+    <div class="req"><span class="label">요청 →</span> 미국 종목 현재가도 한투에서 토스로 옮기고, 토스가 안 줄 때를 대비해 야후로 받쳐서 한투를 걷어낼 준비를 하자.</div>
+    <div class="done"><span class="label">처리 →</span> 미국 현재가를 <b>토스 1순위 + 야후 폴백</b>으로 전환(한투 미국 호출 제거). 정규장 보조줄(regular_close)이 프리마켓에 현재가와 같게 나오던 버그도 수정 — 야후가 세션에 맞춰 주는 마지막 정규장가로 바로잡음(MU 1,051.77·TSLA 381.61 정상). 코스피는 이미 야후로 옮겨 <b>이제 한투가 하는 일이 사실상 없음</b>. 테스트 234개 통과, 실시간 서버 정상. 단 미국 주간거래·애프터마켓 시세는 내일 그 시간대 실측으로 최종 확인 예정(그때까지 야후 폴백이 안전망), 한투 키·코드 완전 삭제도 그 후.</div>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>코스피 지수 데이터 출처를 KIS → Yahoo Finance로 이전 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: backend</p>
+    <p class="req"><span class="label">요청</span> — 코스피 지수(종합·200)를 가져오는 출처를 한국투자증권(KIS) API에서 Yahoo Finance(^KS11·^KS200)로 바꿔 달라. KIS 완전 제거를 위한 선행 작업이며, 미국 현재가와 토스 경로는 건드리지 않는다.</p>
+    <p class="done"><span class="label">처리</span> — <strong>헤더 인디케이터(getIndices)</strong>의 코스피 현재가를 Yahoo ^KS11 호출로 교체. <strong>차트(getStockData)</strong>의 KOSPI200 분기를 KIS 분봉 집계 대신 Yahoo ^KS11 캐시 경로로 전환(캐시 키도 yahoo_stock_data_^KS11 통일). <strong>야간선물(getKOSPINightChartData)</strong>의 베이스를 KIS '2001' → Yahoo ^KS200 직행으로 변경. <strong>getKospiIndexData</strong>를 Yahoo 위임(1줄)으로 단순화해 KIS 코스피 호출(일봉/분봉/stale 판정) 전체 제거. 미국 현재가(KisParallelPriceFetcher·fetchOverseasPriceFromKis)·토스·NQ=F 무손상. 추가로 검증 중 발견한 <strong>지수 등락 표시 버그</strong>(코스피가 실제 +3.26%인데 전일종가를 '이틀 전' 값으로 잡아 -7%로 <em>반대</em>로 표시)도 직전 거래일 종가 기준으로 바로잡음 — NQ=F도 같은 버그가 잠재(변동이 작아 안 띄었을 뿐)해 함께 해결. Unit 테스트 213개 통과(회귀 없음).</p>
+  </div>
+  <div class="entry" data-agent="frontend">
+    <h2>미국 주식 차트 헤더에 원화 환산 현재가·증감액 추가 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: frontend</p>
+    <p class="req"><span class="label">요청</span> — 미국 주식 차트 카드 우측 상단에 달러 가격 아래로 원화 환산 현재가(₩)와 원화 증감액(▲/▼)을 추가해 달라. 국내 주식은 표시하지 않고, 환율이 없을 때는 graceful하게 숨긴다.</p>
+    <p class="done"><span class="label">처리</span> — StockChart.vue 한 파일만 수정. 이미 prop으로 들어오는 usdKrwRate(USDKRW=X 실시간 환율)를 활용해 krwCurrentPrice·krwChangeAmount computed를 추가하고, 헤더 줄1 우측 영역에 원화 환산 줄(₩ 현재가 + ▲/▼ ₩ 증감액)을 달러 줄 아래에 배치. isKorean/isIndex 조건으로 국내·지수 카드엔 미표시, 환율 미수신 시 자동 숨김. Vite 빌드 통과, HMR 반영 확인.</p>
+  </div>
+  <div class="entry" data-agent="tech-lead backend main">
+    <h2>야후·한국투자증권 시세를 토스증권 API로 갈아끼우기 — 환율·국내시세·차트·종목명 전환 완료(미국 현재가만 대기) <span class="badge wip">진행중</span></h2>
+    <p class="meta">2026-06-24 · 담당: tech-lead backend main</p>
+    <div class="req"><span class="label">요청 →</span> 지금 쓰는 야후·한국투자증권 주식 시세를 걷어내고 토스증권 API로 교체(지수는 제외). 종목 이름·타입처럼 토스에서 받을 수 있는 건 DB에서 빼고 토스에서 받기.</div>
+    <div class="done"><span class="label">처리 →</span> 설계문서대로 단계별 착수. ① 토스 연결 토대 → ② <b>환율</b> 토스 교체(원/달러 1,552원) → ③ <b>국내 현재가</b> 토스 교체(등락은 토스 일봉 계산) → ④ <b>국내·미국 차트</b> 토스 교체(지수 무손상) → ⑤ <b>종목 이름·타입·통화</b>를 DB에서 빼고 토스에서 받기(미국 종목명이 티커→한글명, 예 MU→마이크론 테크놀로지, AAPL→애플). 검증 중 버그 다수 수정: 토큰 자동 재발급, 차트 출처 라벨, 실시간 서버 즉사(Log 누락), 종목정보 응답 파싱. DB 컬럼(name·type·currency) 삭제 마이그레이션 실행 완료(DB 슬림화). 테스트 통과·실시간 서버 정상. <b>미국 종목 현재가만 한투 유지 중 — 미국 주간거래·애프터마켓 실측 통과 후 전환 예정.</b></div>
+  </div>
+  <div class="entry" data-agent="backend debug">
+    <h2>미국 종목 헤드라인 현재가 — 애프터마켓에서 엉뚱한 값 나오던 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: backend debug</p>
+    <div class="req"><span class="label">요청 →</span> 애프터마켓 시간에 MU 현재가가 실제가(~1,060)보다 $60 높게 표시되는 버그. 야간장은 깨지지 않도록 세션별로 정확하게 수정.</div>
+    <div class="done"><span class="label">처리 →</span> 실측으로 원인 확정: 애프터마켓에서 Blue Ocean(BAQ) 시세를 우선 써서 $60 stale 값이 나온 것. 실측 결과 NAS 거래소가 Yahoo 실시간 1분봉과 정확히 일치함. 세션별 거래소 우선순위를 정리: 정규장=NAS / 프리·애프터=NAS 우선·BAQ 폴백 / 야간주간거래=BAQ 우선·NAS 폴백으로 통일. 수정 후 MU 현재가 1,060.98 = Yahoo 1분봉 1,060.98 완전 일치(오차 $0). 야간 세션 로직은 유지. 한국 종목 영향 없음. WS(8080) 재시작 완료.</div>
+  </div>
+  <div class="entry" data-agent="backend debug">
+    <h2>미국 종목 "정규장" 보조줄이 전일종가를 잘못 쓰던 버그 수정 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-24 · 담당: backend debug</p>
+    <div class="req"><span class="label">요청 →</span> MU 애프터마켓에서 "정규장" 보조줄 평가액이 이상하게 높게 나옴(+10% 오차). 원인 찾아 전 종목 확실하게 수정.</div>
+    <div class="done"><span class="label">처리 →</span> 실측으로 원인 확정: KIS API의 "기준가(base)"는 전일 종가인데, 이를 정규장 종가로 오해하고 쓰던 버그였음. 오늘 정규장이 크게 하락(1,211→1,051)한 날 전일종가가 그대로 쓰여 +10% 오차 발생. Yahoo Finance의 regularMarketPrice(가장 최근 완료된 정규장 종가)를 우선 사용하고 실패 시 기존값 폴백으로 수정. 수정 후 MU 검증: regular_close 1,211.38 → 1,051.77 (Yahoo값과 일치 OK). 한국 종목은 이 필드 미사용으로 영향 없음. WS(8080) 재시작 완료.</div>
+  </div>
   <div class="entry" data-agent="frontend">
     <h2>소스 정리 — App.vue 미사용 상태·리스너·HoldingsPanel 미사용 import 제거 <span class="badge ok">완료</span></h2>
     <p class="meta">2026-06-24 · 담당: frontend</p>

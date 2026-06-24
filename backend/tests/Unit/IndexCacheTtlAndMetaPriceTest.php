@@ -49,7 +49,7 @@ class IndexCacheTtlAndMetaPriceTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────────────
-    // 2. KOSPI200 분기 — Cache::remember TTL ≤ 15초
+    // 2. KOSPI200 분기 — Cache::remember TTL ≤ 15초 (2026-06-24 Yahoo 전환 후)
     // ──────────────────────────────────────────────────────────────────────
 
     /** @test */
@@ -57,12 +57,12 @@ class IndexCacheTtlAndMetaPriceTest extends TestCase
     {
         $src = $this->getKospi200BranchSource();
 
-        // $candleTtl = 15 로 설정돼야 한다
+        // Cache::remember($cacheKey, 15, ...) 패턴 — Yahoo 전환 후 직접 15초 지정
         $this->assertMatchesRegularExpression(
-            '/\$candleTtl\s*=\s*15\s*;/',
+            '/Cache::remember\s*\(\s*\$cacheKey\s*,\s*15\s*,/',
             $src,
-            'KOSPI200 분기의 $candleTtl 이 15가 아님. ' .
-            'KIS 분봉 집계도 TTL 15초로 단축해야 한다.'
+            'KOSPI200 분기의 Cache::remember TTL 이 15초가 아님. ' .
+            'Yahoo 전환 후에도 지수 캔들 캐시 TTL 은 15초로 유지해야 한다.'
         );
     }
 

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Services\MarketSessionService;
+use App\Services\Toss\TossCandleProvider;
+use App\Services\Toss\TossPriceFetcher;
+use App\Services\Toss\TossStockMaster;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use GuzzleHttp\Client;
@@ -10,112 +13,20 @@ use GuzzleHttp\Client;
 class StockController extends Controller
 {
     private MarketSessionService $sessionService;
+    private TossPriceFetcher $tossPriceFetcher;
+    private TossCandleProvider $tossCandleProvider;
+    private TossStockMaster $stockMaster;
 
-    public function __construct(MarketSessionService $sessionService)
-    {
-        $this->sessionService = $sessionService;
-    }
-
-    private function getAccessToken($forceRefresh = false)
-    {
-        // 만료 토큰 감지 시 강제 갱신 — 캐시를 비워 새 토큰을 발급받는다.
-        if ($forceRefresh) {
-            Cache::forget('kis_access_token');
-        }
-
-        $token = Cache::get('kis_access_token');
-        if ($token) {
-            return $token;
-        }
-
-        // Use a lock to prevent concurrent requests from hitting the KIS token API rate limit (1 req/min)
-        $lock = Cache::lock('kis_token_lock', 15);
-        
-        try {
-            $attempts = 0;
-            while (!$lock->get() && $attempts < 10) {
-                usleep(500000); // Wait 0.5 seconds
-                $token = Cache::get('kis_access_token');
-                if ($token) {
-                    return $token;
-                }
-                $attempts++;
-            }
-
-            // Re-check cache after acquiring lock
-            $token = Cache::get('kis_access_token');
-            if ($token) {
-                return $token;
-            }
-
-            $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-            $appKey = env('KIS_APP_KEY');
-            $appSecret = env('KIS_APP_SECRET');
-
-            if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-                throw new \Exception('KIS_APP_KEY or KIS_APP_SECRET is not configured in .env');
-            }
-
-            $client = new Client();
-            $response = $client->post("{$apiUrl}/oauth2/tokenP", [
-                'json' => [
-                    'grant_type' => 'client_credentials',
-                    'appkey' => $appKey,
-                    'appsecret' => $appSecret,
-                ],
-                'headers' => [
-                    'content-type' => 'application/json',
-                ]
-            ]);
-
-            $data = json_decode($response->getBody()->getContents(), true);
-            if (isset($data['access_token'])) {
-                Cache::put('kis_access_token', $data['access_token'], 72000);
-                return $data['access_token'];
-            }
-
-            throw new \Exception('Failed to retrieve KIS access token: ' . ($data['msg1'] ?? 'Unknown error'));
-        } finally {
-            $lock->release();
-        }
-    }
-
-    private function getPreviousClose($ticker)
-    {
-        $cacheKey = "kis_prev_close_{$ticker}";
-        $prevClose = Cache::get($cacheKey);
-        if ($prevClose !== null) {
-            return (float)$prevClose;
-        }
-
-        try {
-            $dailyCacheKey = "kis_stock_data_{$ticker}_1d";
-            $dailyData = Cache::get($dailyCacheKey);
-            if (!$dailyData) {
-                $response = $this->fetchFromKis($ticker);
-                $dailyData = json_decode($response->getContent(), true);
-            }
-
-            if (isset($dailyData['candles']) && count($dailyData['candles']) >= 2) {
-                $candles = $dailyData['candles'];
-                end($candles);
-                $prevCandle = prev($candles);
-                $prevClose = (float)$prevCandle['close'];
-            } elseif (isset($dailyData['candles']) && count($dailyData['candles']) === 1) {
-                $prevClose = (float)$dailyData['candles'][0]['close'];
-            } else {
-                $prevClose = (float)($dailyData['current_price'] ?? 0.0);
-            }
-
-            if ($prevClose > 0) {
-                Cache::put($cacheKey, $prevClose, 86400); // 24 hours
-                return $prevClose;
-            }
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Failed to fetch previous close for {$ticker}: " . $e->getMessage());
-        }
-
-        return null;
+    public function __construct(
+        MarketSessionService $sessionService,
+        TossPriceFetcher $tossPriceFetcher,
+        TossCandleProvider $tossCandleProvider,
+        TossStockMaster $stockMaster
+    ) {
+        $this->sessionService      = $sessionService;
+        $this->tossPriceFetcher    = $tossPriceFetcher;
+        $this->tossCandleProvider  = $tossCandleProvider;
+        $this->stockMaster         = $stockMaster;
     }
 
     public function getStockData(Request $request, $ticker)
@@ -128,12 +39,11 @@ class StockController extends Controller
         // REST 직접조회 경로는 허용하지 않아 만료 시 동기 fetch 로 갱신한다.
         $allowStale = (bool) $request->attributes->get('ws_allow_stale', false);
 
-        // 코스피 지수(KOSPI200) — KIS 국내업종 API 사용 (값 일관성)
+        // 코스피 지수(KOSPI200) — Yahoo Finance ^KS11 으로 이전 (KIS 제거)
+        // 캐시 키를 yahoo_stock_data_^KS11_{timeframe} 으로 통일해 ^KS11 직접 요청과 공유한다.
         if ($ticker === 'KOSPI200') {
-            // 코스피 지수 캔들은 분봉도 KIS 분봉 집계로 구성.
-            // TTL 15초: Yahoo 가 NQ 데이터를 ~30초마다 갱신하므로 이에 맞춰 단축해 차트 체감 빈도를 높인다.
-            $candleTtl = 15;
-            $cacheKey = "kis_kospi_index_{$timeframe}";
+            // TTL 15초: Yahoo 가 ~30초마다 갱신하므로 이에 맞춰 단축.
+            $cacheKey = "yahoo_stock_data_^KS11_{$timeframe}";
             if ($allowStale) {
                 // WS 전송 경로: stale 캐시 우선 읽기(동기 fetch 금지 — 케이던스 유지)
                 $cached = Cache::get($cacheKey) ?? Cache::get("{$cacheKey}_last");
@@ -144,13 +54,16 @@ class StockController extends Controller
                 $response = $cached;
             } else {
                 // REST 직접조회 경로: 만료 시 동기 갱신 허용
-                $response = Cache::remember($cacheKey, $candleTtl, function () use ($timeframe) {
-                    return $this->getKospiIndexData($timeframe);
+                $response = Cache::remember($cacheKey, 15, function () use ($timeframe) {
+                    return $this->getYahooChartData('^KS11', $timeframe);
                 });
             }
 
             $content = json_decode($response->getContent(), true);
             if (is_array($content)) {
+                // ticker 는 프론트가 KOSPI200 으로 식별하므로 유지
+                $content['ticker'] = 'KOSPI200';
+                $content['name']   = '코스피 지수';
                 $content['session'] = $this->getKrMarketSessionInfo(time());
                 // 프론트가 휴장일(주말·공휴일)에 코스피 칸을 숨기는 판단에 사용
                 $content['is_trading_day'] = $this->isKrTradingDay(time());
@@ -270,7 +183,12 @@ class StockController extends Controller
             // 실시간성은 KIS 현재가(3초 캐시)가 마지막 봉에 덧씌워 담당한다.
             // TTL 90초로 늘려 WS 사이클 Yahoo 만료 빈도를 1/3로 감소.
             $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}_raw";
-            $dataResponse = Cache::remember($cacheKey, 90, function () use ($yahooSymbol, $timeframe, $isDaily) {
+            $dataResponse = Cache::remember($cacheKey, 90, function () use ($ticker, $yahooSymbol, $timeframe, $isDaily) {
+                $tossData = $this->tossCandleProvider->getChartData($ticker, $timeframe, !$isDaily);
+                if ($tossData !== null) {
+                    return response()->json($tossData);
+                }
+                // 토스 실패 시 Yahoo 폴백
                 return $this->getYahooChartData($yahooSymbol, $timeframe, !$isDaily);
             });
 
@@ -366,9 +284,16 @@ class StockController extends Controller
                 $content['session'] = $session;
                 // 휴장일(주말·공휴일)이면 프론트가 차트 대신 텍스트(전일 마감)로 표시
                 $content['is_trading_day'] = $this->isKrTradingDay(time());
+                $content['name'] = $this->stockMaster->getName($ticker);
                 return response()->json($content);
             }
 
+            // candles 없는 경우에도 name 합류
+            $fallbackContent = json_decode($dataResponse->getContent(), true);
+            if (is_array($fallbackContent)) {
+                $fallbackContent['name'] = $this->stockMaster->getName($ticker);
+                return response()->json($fallbackContent);
+            }
             return $dataResponse;
         }
 
@@ -380,21 +305,31 @@ class StockController extends Controller
         $cacheKey = "yahoo_stock_data_{$ticker}_{$timeframe}_raw";
 
         $dataResponse = Cache::remember($cacheKey, 90, function () use ($ticker, $timeframe, $isDaily) {
-            return $this->getYahooChartData($ticker, $timeframe, !$isDaily);
+            $tossData = $this->tossCandleProvider->getChartData($ticker, $timeframe, !$isDaily);
+            if ($tossData !== null) {
+                return response()->json($tossData);
+            }
+            // 토스 실패 시 Yahoo 폴백
+            $yahooFallbackSymbol = preg_match('/(\.KS|\.KQ)$/i', $ticker) ? $ticker : (
+                (preg_match('/^\d{4}[0-9A-Z]{2}$/', $ticker) || preg_match('/^\d+$/', $ticker))
+                ? $ticker . '.KS' : $ticker
+            );
+            return $this->getYahooChartData($yahooFallbackSymbol, $timeframe, !$isDaily);
         });
 
-        // KIS 현재가(미국) — WS/REST 경로 분기:
+        // 토스 현재가(미국) — Phase 4: KIS→토스+Yahoo 폴백으로 전환
+        // 캐시 키는 하위호환 유지: `kis_realtime_price_us_{ticker}` / `kis_last_successful_overseas_price_{ticker}`
         //   WS ($allowStale=true):
-        //     1) primary 캐시 히트(병렬선조회 8초 TTL) → 즉시 반환
+        //     1) primary 캐시 히트(토스 배치 8초 TTL) → 즉시 반환
         //     2) 미스 → 폴백(24h) 반환, 동기 fetch 금지(케이던스 유지)
         //   REST ($allowStale=false):
         //     1) primary 캐시 히트 → 즉시 반환
-        //     2) 미스 → 동기 fetch 로 갱신 후 primary(8초)에 저장
-        //     3) fetch 실패 → 폴백(24h) 반환
-        $cacheKeyKis       = "kis_realtime_price_us_{$ticker}";
-        $fallbackKeyKisUs  = "kis_last_successful_overseas_price_{$ticker}";
-        $kisPrice = Cache::get($cacheKeyKis);
-        // KIS 8초 TTL 캐시 히트 여부 — 폴백(24h) 사용 시 false 로 분봉 누적 스킵
+        //     2) 미스 → 토스 단건 조회(→Yahoo 폴백) 후 primary(8초)에 저장
+        //     3) 모두 실패 → 폴백(24h) 반환
+        $cacheKeyKis      = "kis_realtime_price_us_{$ticker}";
+        $fallbackKeyKisUs = "kis_last_successful_overseas_price_{$ticker}";
+        $kisPrice         = Cache::get($cacheKeyKis);
+        // 8초 TTL 캐시 히트 여부 — 폴백(24h) 사용 시 false 로 분봉 누적 스킵
         $isFreshKisPrice = ($kisPrice !== null);
         if ($kisPrice === null) {
             if ($allowStale) {
@@ -402,12 +337,13 @@ class StockController extends Controller
                 $kisPrice = Cache::get($fallbackKeyKisUs);
                 // 폴백이므로 $isFreshKisPrice 는 false 유지 → 분봉 누적 스킵
             } else {
-                // REST 경로: 동기 fetch 로 갱신(라운드3 이전 동작 복원)
-                $fresh = $this->fetchOverseasPriceFromKis($ticker);
+                // REST 경로: 토스 단건 조회 (토스 실패 시 Yahoo 폴백 — TossPriceFetcher 내부)
+                $fresh = $this->tossPriceFetcher->fetchOverseasSingle($ticker);
                 if ($fresh !== null) {
-                    Cache::put($cacheKeyKis, $fresh, 8);
-                    $kisPrice = $fresh;
-                    $isFreshKisPrice = true; // 동기 fetch 성공 → fresh
+                    // fetchOverseasSingle 내부에서 cacheKey·fallbackKey 모두 저장하므로
+                    // 여기서는 $kisPrice 에만 할당 (이중 저장 불필요)
+                    $kisPrice        = $fresh;
+                    $isFreshKisPrice = true;
                 } else {
                     $kisPrice = Cache::get($fallbackKeyKisUs);
                     // fetch 실패·폴백 → $isFreshKisPrice 는 false 유지
@@ -489,11 +425,26 @@ class StockController extends Controller
             // 세션 라벨은 getUsMarketSessionInfo 가 주말·공휴일·주간거래(20:00~04:00 ET)를 모두 판정한다.
             // 주간거래는 다음 거래일로 이어지는 세션이라 'NY 오늘=거래일'로 막으면 안 된다(과거 휴장 오판 버그).
             $content['session'] = $session;
-            $content['source'] = 'Yahoo + KIS (Daytime)';
+            // 차트 베이스(Toss/Yahoo)를 source 에 반영한다.
+            // $content['source'] 는 캐시된 차트 데이터가 이미 가지고 있는 베이스 라벨
+            // ('Toss (1d)', 'Yahoo Finance (1d)' 등). 이를 살려 KIS 현재가 오버레이 사실을 표기.
+            $baseSource = $content['source'] ?? 'Yahoo Finance';
+            if (strncmp($baseSource, 'Toss', 4) === 0) {
+                $content['source'] = 'Toss';
+            } else {
+                $content['source'] = 'Yahoo + Toss (현재가)';
+            }
             $content['is_trading_day'] = ($session !== '장마감');
+            $content['name'] = $this->stockMaster->getName($ticker);
             return response()->json($content);
         }
 
+        // candles 없는 경우에도 name 합류
+        $fallbackContent = json_decode($dataResponse->getContent(), true);
+        if (is_array($fallbackContent)) {
+            $fallbackContent['name'] = $this->stockMaster->getName($ticker);
+            return response()->json($fallbackContent);
+        }
         return $dataResponse;
     }
 
@@ -505,7 +456,7 @@ class StockController extends Controller
 
         // 1. Fetch Nasdaq 100 Futures (NQ=F)
         try {
-            $responseNq = $client->get('https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1d&range=2d', [
+            $responseNq = $client->get('https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1d&range=7d', [
                 'headers' => [
                     'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 ]
@@ -522,40 +473,24 @@ class StockController extends Controller
             ];
         }
 
-        // 2. 코스피 지수(0001=코스피 종합) 현재가 — KIS 국내업종 현재지수 API (tr_id FHPUP02100000)
+        // 2. 코스피 지수(^KS11=코스피 종합) 현재가 — Yahoo Finance v8 chart API
         try {
-            $data = $this->kisIndexRequest(
-                '/uapi/domestic-stock/v1/quotations/inquire-index-price',
-                'FHPUP02100000',
-                [
-                    'FID_COND_MRKT_DIV_CODE' => 'U', // 업종(지수)
-                    'FID_INPUT_ISCD' => '0001',      // 코스피 종합(전체)
+            $responseKs = $client->get('https://query1.finance.yahoo.com/v8/finance/chart/^KS11?interval=1d&range=7d', [
+                'headers' => [
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 ]
-            );
-
-            if ($data && ($data['rt_cd'] ?? '1') === '0' && isset($data['output']['bstp_nmix_prpr'])) {
-                $o = $data['output'];
-                $price = (float)$o['bstp_nmix_prpr'];
-                [$change, $changePercent] = $this->kisIndexChange($o);
-
-                $kospiPriced = [
-                    'name' => '코스피 지수',
-                    'price' => round($price, 2),
-                    'change' => round($change, 2),
-                    'change_percent' => round($changePercent, 2),
-                    'source' => 'KIS API (0001)'
-                ];
-            } else {
-                throw new \Exception($data['msg1'] ?? 'Invalid KIS response for KOSPI index');
-            }
+            ]);
+            $dataKs = json_decode($responseKs->getBody()->getContents(), true);
+            $kospiPriced = $this->parseYahooFinanceChart($dataKs, '코스피 지수');
+            $kospiPriced['source'] = 'Yahoo Finance (^KS11)';
         } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("KIS KOSPI Index Fetch Error: " . $e->getMessage());
+            \Illuminate\Support\Facades\Log::error("Yahoo KOSPI (^KS11) Index Fetch Error: " . $e->getMessage());
 
             $kospiPriced = [
                 'name' => '코스피 지수',
-                'price' => 362.45,
-                'change' => -1.20,
-                'change_percent' => -0.33,
+                'price' => 0.0,
+                'change' => 0.0,
+                'change_percent' => 0.0,
                 'source' => 'Mock'
             ];
         }
@@ -583,26 +518,25 @@ class StockController extends Controller
         $meta = $result['meta'];
         
         $price = $meta['regularMarketPrice'] ?? 0.0;
-        $prevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? 0.0;
-        
+        // 전일종가: chartPreviousClose 는 range '시작 직전' 값이라 range=2d 면 '이틀 전'이 됨(한 칸 밀림 버그).
+        // 따라서 close 배열의 직전 봉(closes[n-2])을 전일종가로 쓴다. 부족할 때만 meta 폴백.
+        $prevClose = 0.0;
+
         if (isset($result['indicators']['quote'][0]['close'])) {
-            $closes = array_values(array_filter($result['indicators']['quote'][0]['close']));
-            if (count($closes) >= 2) {
-                if ($price == 0.0) {
-                    $price = end($closes);
-                }
-                if ($prevClose == 0.0) {
-                    $prevClose = $closes[0];
-                }
-            } elseif (count($closes) == 1) {
-                if ($price == 0.0) {
-                    $price = $closes[0];
-                }
+            $closes = array_values(array_filter($result['indicators']['quote'][0]['close'], function ($v) {
+                return $v !== null;
+            }));
+            $n = count($closes);
+            if ($n >= 1 && $price == 0.0) {
+                $price = end($closes);
+            }
+            if ($n >= 2) {
+                $prevClose = $closes[$n - 2];
             }
         }
-        
+
         if ($prevClose == 0.0) {
-            $prevClose = $price;
+            $prevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $price;
         }
         
         $change = $price - $prevClose;
@@ -682,247 +616,6 @@ class StockController extends Controller
                     'status' => '거래중'
                 ]
             ]
-        ]);
-    }
-
-    private function fetchFromKis($ticker)
-    {
-        $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-        $accessToken = $this->getAccessToken();
-
-        $exchanges = ['NAS', 'NYS', 'AMS'];
-        $output2 = null;
-
-        $client = new Client();
-
-        foreach ($exchanges as $exchange) {
-            try {
-                $response = $client->get("{$apiUrl}/uapi/overseas-price/v1/quotations/dailyprice", [
-                    'headers' => [
-                        'content-type' => 'application/json',
-                        'authorization' => "Bearer {$accessToken}",
-                        'appkey' => $appKey,
-                        'appsecret' => $appSecret,
-                        'tr_id' => 'HHDFS76240000',
-                    ],
-                    'query' => [
-                        'AUTH' => '',
-                        'EXCD' => $exchange,
-                        'SYMB' => $ticker,
-                        'GUBN' => '0',
-                        'BYMD' => '',
-                        'MODP' => '1',
-                    ]
-                ]);
-
-                $data = json_decode($response->getBody()->getContents(), true);
-                
-                if (isset($data['output2']) && is_array($data['output2']) && count($data['output2']) > 0 && (float)$data['output2'][0]['clos'] > 0) {
-                    $output2 = $data['output2'];
-                    break;
-                }
-            } catch (\Exception $ex) {
-                continue;
-            }
-        }
-
-        if (empty($output2)) {
-            throw new \Exception("No price data found for ticker {$ticker} on NAS, NYS, or AMS.");
-        }
-
-        $candles = [];
-        foreach ($output2 as $row) {
-            if (empty($row['xymd']) || (float)$row['open'] == 0) continue;
-
-            $dateStr = substr($row['xymd'], 0, 4) . '-' . substr($row['xymd'], 4, 2) . '-' . substr($row['xymd'], 6, 2);
-
-            $candles[] = [
-                'time' => $dateStr,
-                'open' => (float)$row['open'],
-                'high' => (float)$row['high'],
-                'low' => (float)$row['low'],
-                'close' => (float)$row['clos'],
-                'volume' => (int)$row['tvol'],
-            ];
-        }
-
-        $candles = array_reverse($candles);
-
-        if (empty($candles)) {
-            throw new \Exception("Failed to parse stock candle data.");
-        }
-
-        $latestCandle = end($candles);
-        $prevCandle = prev($candles) ?: $latestCandle;
-
-        $current = $latestCandle['close'];
-        $prevClose = $prevCandle['close'];
-
-        // Cache the daily previous close for other timeframes to use
-        Cache::put("kis_prev_close_{$ticker}", $prevClose, 86400); // 24 hours
-
-        $changeAmount = $current - $prevClose;
-        $changePercent = ($prevClose > 0) ? ($changeAmount / $prevClose) * 100 : 0.0;
-
-        return response()->json([
-            'ticker' => $ticker,
-            'name' => $this->getStockName($ticker),
-            'current_price' => round($current, 2),
-            'change_amount' => round($changeAmount, 2),
-            'change_percent' => round($changePercent, 2),
-            'candles' => $candles,
-            'source' => 'KIS API'
-        ]);
-    }
-
-    /**
-     * 미국 주식 분봉 데이터를 KIS API 로 조회한다.
-     *
-     * 주간거래(Blue Ocean ATS, 20:00~04:00 ET) 시간대에는 정규장 EXCD(NAS/NYS/AMS)가
-     * 정규장 당일 봉만 반환하므로, 주간거래 전용 코드를 먼저 시도한다:
-     *   - BAQ : Nasdaq Blue Ocean / BAY : NYSE Blue Ocean / BAA : AMEX Blue Ocean
-     */
-    private function fetchMinuteFromKis($ticker, $timeframe)
-    {
-        $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-        $accessToken = $this->getAccessToken();
-
-        $nmin = '1';
-        if ($timeframe === '3m') $nmin = '3';
-        elseif ($timeframe === '5m') $nmin = '5';
-        elseif ($timeframe === '10m') $nmin = '10';
-        elseif ($timeframe === '30m') $nmin = '30';
-        elseif ($timeframe === '1h') $nmin = '60';
-
-        // 세션 판정 후 시도 순서 결정 — 현재가 조회(fetchOverseasPriceFromKis)와 동일한 4그룹 세분화
-        // 분봉용 EXCD 캐시는 현재가 캐시와 키를 공유하므로, 세션 그룹도 동일하게 맞춰야 한다.
-        $session = $this->getUsMarketSessionInfo(time());
-
-        if ($session === '정규장') {
-            $sessionGroup = '정규장';
-            // 정규장: BAQ/BAY/BAA 완전 제외 — 장외 stale 값 오염 방지
-            $allExchanges = ['NAS', 'NYS', 'AMS'];
-        } elseif ($session === '프리마켓') {
-            $sessionGroup = '프리마켓';
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
-        } elseif ($session === '애프터마켓') {
-            $sessionGroup = '애프터마켓';
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
-        } elseif ($session === '주간거래') {
-            $sessionGroup = '주간거래';
-            $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
-        } else {
-            $sessionGroup = 'unknown';
-            $allExchanges = ['NAS', 'NYS', 'AMS'];
-        }
-
-        // 분봉용 EXCD 캐시 — 현재가와 동일한 종목별·세션그룹별 캐시를 재사용
-        // (분봉/일봉은 같은 거래소에 상장돼 있으므로 동일 키 공유)
-        $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
-        $cachedExcd = Cache::get($excdCacheKey);
-        if ($cachedExcd !== null) {
-            $exchanges = array_merge(
-                [$cachedExcd],
-                array_values(array_filter($allExchanges, fn($e) => $e !== $cachedExcd))
-            );
-        } else {
-            $exchanges = $allExchanges;
-        }
-
-        $output2 = null;
-        $client = new Client();
-        $trId = (strpos($apiUrl, 'openapivts') !== false) ? 'VHDFS76950200' : 'HHDFS76950200';
-
-        foreach ($exchanges as $exchange) {
-            try {
-                $response = $client->get("{$apiUrl}/uapi/overseas-price/v1/quotations/inquire-time-itemchartprice", [
-                    'headers' => [
-                        'content-type' => 'application/json',
-                        'authorization' => "Bearer {$accessToken}",
-                        'appkey' => $appKey,
-                        'appsecret' => $appSecret,
-                        'tr_id' => $trId,
-                    ],
-                    'query' => [
-                        'AUTH' => '',
-                        'EXCD' => $exchange,
-                        'SYMB' => $ticker,
-                        'NMIN' => $nmin,
-                        'PINC' => '0',
-                        'NEXT' => '',
-                        'KEYB' => '',
-                        'NREC' => '120',
-                        'FILL' => 'N',
-                    ]
-                ]);
-
-                $data = json_decode($response->getBody()->getContents(), true);
-
-                if (isset($data['output2']) && is_array($data['output2']) && count($data['output2']) > 0 && (float)$data['output2'][0]['last'] > 0) {
-                    $output2 = $data['output2'];
-                    // 성공한 EXCD 캐싱 — fetchOverseasPriceFromKis 와 같은 키를 공유해 중복 탐색 방지
-                    if ($cachedExcd !== $exchange) {
-                        Cache::put($excdCacheKey, $exchange, 86400);
-                    }
-                    break;
-                }
-            } catch (\Exception $ex) {
-                continue;
-            }
-        }
-
-        if (empty($output2)) {
-            throw new \Exception("No minute price data found for ticker {$ticker} on NAS, NYS, AMS, BAQ, BAY, or BAA.");
-        }
-
-        $candles = [];
-        foreach ($output2 as $row) {
-            if (empty($row['xymd']) || empty($row['xhms']) || (float)$row['open'] == 0) continue;
-
-            $dateStr = substr($row['xymd'], 0, 4) . '-' . substr($row['xymd'], 4, 2) . '-' . substr($row['xymd'], 6, 2);
-            $timeStr = substr($row['xhms'], 0, 2) . ':' . substr($row['xhms'], 2, 2) . ':' . substr($row['xhms'], 4, 2);
-            
-            $dateTime = new \DateTime($dateStr . ' ' . $timeStr, new \DateTimeZone('America/New_York'));
-            $timestamp = $dateTime->getTimestamp();
-
-            $candles[] = [
-                'time' => $timestamp,
-                'open' => (float)$row['open'],
-                'high' => (float)$row['high'],
-                'low' => (float)$row['low'],
-                'close' => (float)$row['last'],
-                'volume' => (int)$row['evol'],
-            ];
-        }
-
-        $candles = array_reverse($candles);
-
-        if (empty($candles)) {
-            throw new \Exception("Failed to parse minute stock candle data.");
-        }
-
-        $latestCandle = end($candles);
-        $current = $latestCandle['close'];
-
-        // Get daily previous close for correct daily change percentage
-        $dailyPrevClose = $this->getPreviousClose($ticker);
-        $prevCloseForChange = ($dailyPrevClose !== null && $dailyPrevClose > 0) ? $dailyPrevClose : $latestCandle['close'];
-
-        $changeAmount = $current - $prevCloseForChange;
-        $changePercent = ($prevCloseForChange > 0) ? ($changeAmount / $prevCloseForChange) * 100 : 0.0;
-
-        return response()->json([
-            'ticker' => $ticker,
-            'name' => $this->getStockName($ticker),
-            'current_price' => round($current, 2),
-            'change_amount' => round($changeAmount, 2),
-            'change_percent' => round($changePercent, 2),
-            'candles' => $candles,
-            'source' => 'KIS API (' . $timeframe . ')'
         ]);
     }
 
@@ -1018,12 +711,7 @@ class StockController extends Controller
             $prevCandle = prev($candles) ?: $latestCandle;
             $prevClose = $prevCandle['close'];
         } else {
-            $dailyPrevClose = $this->getPreviousClose($ticker);
-            if ($dailyPrevClose !== null && $dailyPrevClose > 0) {
-                $prevClose = $dailyPrevClose;
-            } else {
-                $prevClose = $candles[0]['close'] ?? $basePrice;
-            }
+            $prevClose = $candles[0]['close'] ?? $basePrice;
         }
         
         $changeAmount = $current - $prevClose;
@@ -1174,48 +862,14 @@ class StockController extends Controller
             $current = $latestCandle['close'];
 
             if ($timeframe === '1d') {
-                // 지수·선물은 60d range 쿼리의 chartPreviousClose 가 범위 시작 직전 값이라
-                // 전일종가와 다르다(예: NQ=F 60d 쿼리 → chartPreviousClose = 24408, 실제 전일 = 30719).
-                // range=2d 미니 요청으로 chartPreviousClose(공식 전일종가)만 별도 취득한다.
-                // 개별 종목 1d 동작은 그대로 유지(회귀 최소화).
-                if (in_array($ticker, ['NQ=F', 'KOSPI200', '^KS200', '^KS11'], true)) {
-                    $prevClose = 0.0;
-                    try {
-                        $miniUrl  = "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}?interval=1d&range=2d";
-                        $miniResp = $client->get($miniUrl, [
-                            'headers' => ['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
-                            'timeout' => 5,
-                        ]);
-                        $miniData = json_decode($miniResp->getBody()->getContents(), true);
-                        $miniMeta = $miniData['chart']['result'][0]['meta'] ?? [];
-                        $fetched  = (float)($miniMeta['chartPreviousClose'] ?? $miniMeta['previousClose'] ?? 0.0);
-                        if ($fetched > 0) {
-                            $prevClose = $fetched;
-                        }
-                    } catch (\Throwable $miniEx) {
-                        \Illuminate\Support\Facades\Log::warning("Yahoo mini-prevClose fallback for {$ticker}: " . $miniEx->getMessage());
-                    }
-                    // mini 요청 실패 시 직전 봉으로 폴백
-                    if ($prevClose <= 0) {
-                        $prevClose = prev($candles)['close'] ?? $current;
-                    }
-                } else {
-                    $prevCandle = prev($candles) ?: $latestCandle;
-                    $prevClose = $prevCandle['close'];
-                }
+                // 전일종가 = 차트의 직전 봉 close (지수·개별 동일).
+                // chartPreviousClose 는 조회 범위 시작 직전 값이라 전일종가가 한 칸 밀린다 → 사용 안 함.
+                $prevCandle = prev($candles) ?: $latestCandle;
+                $prevClose = $prevCandle['close'];
             } else {
-                // For regular stocks, prioritize the daily previous close from KIS to match the Watchlist sidebar
-                $dailyPrevClose = null;
-                if ($ticker !== 'NQ=F' && $ticker !== 'KOSPI200' && $ticker !== '^KS200' && $ticker !== '^KS11') {
-                    $dailyPrevClose = $this->getPreviousClose($ticker);
-                }
-
-                if ($dailyPrevClose !== null && $dailyPrevClose > 0) {
-                    $prevClose = $dailyPrevClose;
-                } else {
-                    $metaPrevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? 0.0;
-                    $prevClose = ($metaPrevClose > 0) ? $metaPrevClose : ($candles[0]['close'] ?? $current);
-                }
+                // Yahoo meta 전일종가 사용 (KIS 전일종가 조회 제거 후 Yahoo meta로 통일)
+                $metaPrevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? 0.0;
+                $prevClose = ($metaPrevClose > 0) ? $metaPrevClose : ($candles[0]['close'] ?? $current);
             }
             
             $changeAmount = $current - $prevClose;
@@ -1250,20 +904,9 @@ class StockController extends Controller
         $nqData = json_decode($nqResponse->getContent(), true);
 
         // 야간선물(코스피200 선물)의 베이스는 KOSPI200(~1,477 스케일)이어야 한다.
-        // KIS 분봉 API의 '2001' 코드로 시도하되, 반환값이 KOSPI200 범위(300~3000)를 벗어나면
-        // Yahoo ^KS200 분봉으로 자동 폴백해 올바른 base를 확보한다.
-        $kospiResponse = $this->getKospiIndexData($timeframe, '2001');
+        // Yahoo Finance ^KS200 으로 직행 (KIS '2001' 제거).
+        $kospiResponse = $this->getYahooChartData('^KS200', $timeframe);
         $kospiData = json_decode($kospiResponse->getContent(), true);
-
-        // KIS 반환값이 KOSPI200 스케일(300~3000)을 벗어나면 Yahoo ^KS200 으로 폴백
-        $kospiCandlesForCheck = $kospiData['candles'] ?? [];
-        $kospiLastCandle = $kospiCandlesForCheck ? end($kospiCandlesForCheck) : false;
-        $kospiLastClose = ($kospiLastCandle !== false) ? (float)($kospiLastCandle['close'] ?? 0.0) : 0.0;
-        if ($kospiLastClose > 3000 || $kospiLastClose < 100) {
-            \Illuminate\Support\Facades\Log::info("KOSPI_NIGHT: KIS '2001' 반환값({$kospiLastClose})이 KOSPI200 범위 이탈 → Yahoo ^KS200 폴백");
-            $kospiResponse = $this->getYahooChartData('^KS200', $timeframe);
-            $kospiData = json_decode($kospiResponse->getContent(), true);
-        }
 
         if (!isset($nqData['candles']) || !isset($kospiData['candles'])) {
             return $kospiResponse;
@@ -1327,117 +970,6 @@ class StockController extends Controller
     }
 
     /**
-     * KIS 국내업종(지수) API 공통 호출. 토큰 만료(EGW00123) 시 1회 강제 갱신·재시도.
-     * 실패 시 null 반환.
-     */
-    private function kisIndexRequest($path, $trId, $query)
-    {
-        $apiUrl = env('KIS_API_URL', 'https://openapi.koreainvestment.com:9443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-
-        if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-            return null;
-        }
-
-        $client = new Client();
-        $doRequest = function ($token) use ($client, $apiUrl, $path, $appKey, $appSecret, $trId, $query) {
-            return $client->get("{$apiUrl}{$path}", [
-                'headers' => [
-                    'content-type' => 'application/json',
-                    'authorization' => "Bearer {$token}",
-                    'appkey' => $appKey,
-                    'appsecret' => $appSecret,
-                    'tr_id' => $trId,
-                    'custtype' => 'P',
-                ],
-                'query' => $query,
-                'http_errors' => false,
-            ]);
-        };
-
-        try {
-            $token = $this->getAccessToken();
-            $data = json_decode($doRequest($token)->getBody()->getContents(), true);
-
-            if (isset($data['msg_cd']) && $data['msg_cd'] === 'EGW00123') {
-                $token = $this->getAccessToken(true);
-                $data = json_decode($doRequest($token)->getBody()->getContents(), true);
-            }
-            return $data;
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("KIS 지수 요청 실패 [{$trId}]: " . $e->getMessage());
-            return null;
-        }
-    }
-
-    private function kisIndexChange($row)
-    {
-        $chg = (float)($row['bstp_nmix_prdy_vrss'] ?? 0);
-        $pct = (float)($row['bstp_nmix_prdy_ctrt'] ?? 0);
-        $sign = $row['prdy_vrss_sign'] ?? '3'; // 1상한 2상승 3보합 4하한 5하락
-        if ($sign === '4' || $sign === '5') {
-            $chg = -abs($chg);
-            $pct = -abs($pct);
-        }
-        return [round($chg, 2), round($pct, 2)];
-    }
-
-    private function kisIndexResponse($current, $chg, $pct, $candles, $source)
-    {
-        return response()->json([
-            'ticker' => 'KOSPI200',
-            'name' => '코스피 지수',
-            'current_price' => round($current, 2),
-            'change_amount' => round($chg, 2),
-            'change_percent' => round($pct, 2),
-            'candles' => $candles,
-            'source' => $source,
-        ]);
-    }
-
-    /**
-     * 코스피 지수 1d 응답에 KIS 라이브 현재지수를 적용한다.
-     *
-     * Yahoo 폴백 경로·KIS 정상 경로 모두 이 메서드를 통해 최종 응답을 만든다.
-     * $liveCurrent > 0 일 때만 덮어쓰며, 0 이하면 원래 값을 그대로 유지한다.
-     * 마지막 봉 close = $liveCurrent, high = max(last.high, live), low = min(last.low, live).
-     * 가짜 새 봉은 생성하지 않는다 — 기존 마지막 봉만 수정한다.
-     */
-    private function applyLiveCurrentToIndexResponse(
-        \Illuminate\Http\JsonResponse $response,
-        float $liveCurrent,
-        float $liveChg,
-        float $livePct
-    ): \Illuminate\Http\JsonResponse {
-        if ($liveCurrent <= 0) {
-            return $response;
-        }
-
-        $content = json_decode($response->getContent(), true);
-        if (!is_array($content) || empty($content['candles'])) {
-            return $response;
-        }
-
-        // current_price·등락 덮어쓰기
-        $content['current_price']   = round($liveCurrent, 2);
-        $content['change_amount']   = round($liveChg, 2);
-        $content['change_percent']  = round($livePct, 2);
-
-        // 마지막 봉 수정 (가짜 새 봉 생성 금지 — 기존 마지막 봉만)
-        $lastIdx = count($content['candles']) - 1;
-        $content['candles'][$lastIdx]['close'] = round($liveCurrent, 2);
-        if ($liveCurrent > $content['candles'][$lastIdx]['high']) {
-            $content['candles'][$lastIdx]['high'] = round($liveCurrent, 2);
-        }
-        if ($liveCurrent < $content['candles'][$lastIdx]['low']) {
-            $content['candles'][$lastIdx]['low'] = round($liveCurrent, 2);
-        }
-
-        return response()->json($content);
-    }
-
-    /**
      * iscd 값을 Yahoo Finance 심볼로 매핑한다.
      * '0001' (코스피 종합) → '^KS11', '2001' (코스피200) → '^KS200'.
      * 미지의 iscd 는 안전하게 '^KS11' 로 폴백.
@@ -1464,323 +996,54 @@ class StockController extends Controller
      * 버그 B 수정 (2026-06-23):
      *   분봉 intervalSeconds 블록에 1m 케이스가 없어 1m 이 3m 으로 집계되던 문제 수정.
      */
+    /**
+     * 코스피 지수 차트 데이터 — Yahoo Finance 직행 (KIS 코스피 경로 제거).
+     * '0001' (코스피 종합) → ^KS11, '2001' (코스피200) → ^KS200.
+     *
+     * 이 메서드는 KOSPI_NIGHT 합성 등 내부에서만 호출된다.
+     * getStockData('KOSPI200') 는 getYahooChartData('^KS11', ...) 를 직접 호출하므로
+     * 이 함수를 거치지 않는다.
+     */
     public function getKospiIndexData($timeframe, $iscd = '0001')
     {
         $yahooSymbol = $this->kospiYahooSymbol($iscd);
-
-        if ($timeframe === '1d') {
-            $data = $this->kisIndexRequest(
-                '/uapi/domestic-stock/v1/quotations/inquire-daily-indexchartprice',
-                'FHPUP02120000',
-                [
-                    'FID_COND_MRKT_DIV_CODE' => 'U',
-                    'FID_INPUT_ISCD' => $iscd,
-                    'FID_INPUT_DATE_1' => date('Ymd', strtotime('-120 days')),
-                    'FID_INPUT_DATE_2' => date('Ymd'),
-                    'FID_PERIOD_DIV_CODE' => 'D',
-                ]
-            );
-
-            if (!$data || ($data['rt_cd'] ?? '1') !== '0' || empty($data['output2'])) {
-                \Illuminate\Support\Facades\Log::info("KOSPI 1d [{$iscd}]: KIS 응답 실패 → Yahoo {$yahooSymbol} 폴백");
-                return $this->getYahooChartData($yahooSymbol, $timeframe);
-            }
-
-            $candles = [];
-            foreach ($data['output2'] as $r) { // KIS 정렬 가정하지 않고 전부 수집 후 시간순 정렬
-                if ((float)($r['bstp_nmix_prpr'] ?? 0) <= 0) {
-                    continue;
-                }
-                $candles[] = [
-                    'time' => date('Y-m-d', strtotime($r['stck_bsop_date'])),
-                    'open' => round((float)$r['bstp_nmix_oprc'], 2),
-                    'high' => round((float)$r['bstp_nmix_hgpr'], 2),
-                    'low' => round((float)$r['bstp_nmix_lwpr'], 2),
-                    'close' => round((float)$r['bstp_nmix_prpr'], 2),
-                    'volume' => (int)($r['acml_vol'] ?? 0),
-                ];
-            }
-
-            if (empty($candles)) {
-                \Illuminate\Support\Facades\Log::info("KOSPI 1d [{$iscd}]: 캔들 파싱 결과 0개 → Yahoo {$yahooSymbol} 폴백");
-                return $this->getYahooChartData($yahooSymbol, $timeframe);
-            }
-
-            usort($candles, function ($a, $b) {
-                return strcmp($a['time'], $b['time']); // 과거 → 최신
-            });
-
-            $o1 = $data['output1'] ?? [];
-            $current = (float)($o1['bstp_nmix_prpr'] ?? 0);
-
-            // ── KIS output1 라이브값 캡처 (폴백 전에 보존) ──────────────────────
-            // stale 판정 후 Yahoo 폴백으로 넘어가도 output1 의 라이브 현재지수·등락은
-            // 여전히 유효하다(KIS 호출 자체는 성공, 캔들 데이터만 과거). 폴백 직전에
-            // 캡처해 두면 Yahoo 폴백 경로에서도 현재가를 라이브값으로 덮어쓸 수 있다.
-            $liveCurrent = ($current > 0) ? $current : 0.0;
-            [$liveChg, $livePct] = ($current > 0)
-                ? $this->kisIndexChange($o1)
-                : [0.0, 0.0];
-            // ────────────────────────────────────────────────────────────────────
-
-            // ── 값-기반 stale 판정 (버그 A) ─────────────────────────────────────
-            // KIS 가 rt_cd=0 성공이지만 ~4개월 전 데이터를 반환하는 현상 대응.
-            // output1.bstp_nmix_prpr = 실시간 현재지수 vs 캔들 최신 close 비교.
-            // 현재지수 > 0 이고 괴리가 10% 초과면 stale 로 판정 → Yahoo 폴백.
-            // (10% 임계치: 장중 변동 최대 ±8% 수준을 고려해 충분한 여유를 둠)
-            $latestKisClose = (float)(end($candles)['close'] ?? 0.0);
-            if ($current > 0 && $latestKisClose > 0) {
-                $deviation = abs($current - $latestKisClose) / $latestKisClose;
-                if ($deviation > 0.10) {
-                    \Illuminate\Support\Facades\Log::warning(
-                        "KOSPI 1d [{$iscd}] stale 감지: current={$current}, lastClose={$latestKisClose}, " .
-                        "deviation=" . round($deviation * 100, 1) . "% > 10% → Yahoo {$yahooSymbol} 폴백"
-                    );
-                    // Yahoo 폴백: 캔들 히스토리는 Yahoo, 현재가·등락은 KIS 라이브값으로 덮어쓴다.
-                    $yahooResp = $this->getYahooChartData($yahooSymbol, $timeframe);
-                    return $this->applyLiveCurrentToIndexResponse($yahooResp, $liveCurrent, $liveChg, $livePct);
-                }
-            }
-            // ────────────────────────────────────────────────────────────────────
-
-            if ($current <= 0) {
-                $current = $latestKisClose;
-            }
-            [$chg, $pct] = $this->kisIndexChange($o1);
-            // KIS 정상 경로: 응답을 만든 뒤 마지막 봉 close 를 라이브 현재지수로 갱신한다.
-            $response = $this->kisIndexResponse($current, $chg, $pct, $candles, 'KIS 코스피 지수 (일봉)');
-            return $this->applyLiveCurrentToIndexResponse($response, $current, $chg, $pct);
-        }
-
-        // 분봉 (1m/3m/5m/10m/30m/1h) — KIS 업종 분봉(종가만 제공) → OHLC 합성 후 집계
-        $data = $this->kisIndexRequest(
-            '/uapi/domestic-stock/v1/quotations/inquire-time-indexchartprice',
-            'FHPUP02110200',
-            [
-                'FID_COND_MRKT_DIV_CODE' => 'U',
-                'FID_INPUT_ISCD' => $iscd,
-                'FID_INPUT_HOUR_1' => '',
-                'FID_PW_DATA_INCU_YN' => 'Y',
-                'FID_ETC_CLS_CODE' => '',
-            ]
-        );
-
-        if (!$data || ($data['rt_cd'] ?? '1') !== '0' || empty($data['output'])) {
-            return $this->getYahooChartData($yahooSymbol, $timeframe);
-        }
-
-        // 첫 행 bsop_hour '888888'(요약) 및 비정상 시각 제외
-        $rows = array_values(array_filter($data['output'], function ($r) {
-            $h = $r['bsop_hour'] ?? '';
-            return preg_match('/^\d{6}$/', $h) && $h !== '888888' && (int)substr($h, 0, 2) <= 23;
-        }));
-
-        $tzSeoul = new \DateTimeZone('Asia/Seoul');
-        $todayStr = (new \DateTime('now', $tzSeoul))->format('Ymd');
-
-        // 종가만 제공되므로 (ts, close, vol, row) 로 파싱 후 시간순 정렬 (KIS 정렬 가정하지 않음)
-        $points = [];
-        foreach ($rows as $r) {
-            $close = (float)$r['bstp_nmix_prpr'];
-            if ($close <= 0) {
-                continue;
-            }
-            $dt = \DateTime::createFromFormat('YmdHis', $todayStr . $r['bsop_hour'], $tzSeoul);
-            if (!$dt) {
-                continue;
-            }
-            $ts = $dt->getTimestamp();
-            $ts = $ts - ($ts % 60);
-            $points[] = ['ts' => $ts, 'close' => $close, 'vol' => (int)($r['cntg_vol'] ?? 0), 'row' => $r];
-        }
-
-        if (empty($points)) {
-            return $this->getYahooChartData($yahooSymbol, $timeframe);
-        }
-
-        usort($points, function ($a, $b) {
-            return $a['ts'] <=> $b['ts']; // 과거 → 최신
-        });
-
-        // 전봉 종가를 시가로 사용해 OHLC 합성 (인덱스 분봉은 종가만 제공)
-        $oneMin = [];
-        $prevClose = null;
-        foreach ($points as $p) {
-            $close = $p['close'];
-            $open = $prevClose ?? $close;
-            $oneMin[] = [
-                'time' => $p['ts'],
-                'open' => round($open, 2),
-                'high' => round(max($open, $close), 2),
-                'low' => round(min($open, $close), 2),
-                'close' => round($close, 2),
-                'volume' => $p['vol'],
-            ];
-            $prevClose = $close;
-        }
-
-        // 버그 B 수정: 1m 케이스 추가 (누락으로 인해 1m 이 기본 180초=3m 으로 집계되던 문제)
-        $intervalSeconds = 180;
-        if ($timeframe === '1m') $intervalSeconds = 60;
-        elseif ($timeframe === '5m') $intervalSeconds = 300;
-        elseif ($timeframe === '10m') $intervalSeconds = 600;
-        elseif ($timeframe === '30m') $intervalSeconds = 1800;
-        elseif ($timeframe === '1h') $intervalSeconds = 3600;
-
-        $candles = $this->aggregateCandles($oneMin, $intervalSeconds);
-
-        // 시간순 정렬된 마지막 분의 원본 행에서 현재가·등락 추출
-        $latestPoint = end($points);
-        $latestRow = $latestPoint['row'];
-        $current = (float)$latestRow['bstp_nmix_prpr'];
-        [$chg, $pct] = $this->kisIndexChange($latestRow);
-        return $this->kisIndexResponse($current, $chg, $pct, $candles, 'KIS 코스피 지수 (' . $timeframe . ')');
+        return $this->getYahooChartData($yahooSymbol, $timeframe);
     }
 
+    /**
+     * 국내 종목 현재가 조회 — Phase 3: KIS → 토스 전환.
+     *
+     * TossPriceFetcher::fetchSingle() 으로 위임한다.
+     * 캐시 키 · 폴백 키는 TossPriceFetcher 내부에서 기존과 동일하게 유지:
+     *   `kis_realtime_price_{ticker}` (TTL 8s)
+     *   `kis_last_successful_price_{ticker}` (TTL 86400s)
+     * → getStockData 의 $cacheKeyKis / $fallbackKeyKis 코드 무변경.
+     *
+     * 미국 종목이 실수로 들어오면 null 반환 (TossPriceFetcher 내부 guard).
+     *
+     * @param  string  $ticker  앱 내부 심볼
+     * @return array{price:float,change_amount:float,change_percent:float}|null
+     */
     private function fetchDomesticPriceFromKis($ticker)
     {
-        $code = preg_replace('/(\.KS|\.KQ)$/i', '', $ticker);
-        
-        $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-        
-        if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-            return null;
-        }
-        
-        $lastSuccessKey = "kis_last_successful_price_{$ticker}";
-        
-        try {
-            $accessToken = $this->getAccessToken();
-            $client = new Client();
-            $trId = (strpos($apiUrl, 'openapivts') !== false) ? 'VHPST01010000' : 'FHPST01010000';
-            
-            $response = $client->get("{$apiUrl}/uapi/domestic-stock/v1/quotations/inquire-price", [
-                'headers' => [
-                    'content-type' => 'application/json',
-                    'authorization' => "Bearer {$accessToken}",
-                    'appkey' => $appKey,
-                    'appsecret' => $appSecret,
-                    'tr_id' => $trId,
-                ],
-                'query' => [
-                    'FID_COND_MRKT_DIV_CODE' => 'J',
-                    'FID_INPUT_ISCD' => $code,
-                ]
-            ]);
-            
-            $data = json_decode($response->getBody()->getContents(), true);
-            if (isset($data['output']['stck_prpr'])) {
-                $price = (float)$data['output']['stck_prpr'];
-                $change = (float)$data['output']['prdy_vrss'];
-                $changePercent = (float)$data['output']['prdy_ctrt'];
-                $sign = $data['output']['prdy_vrss_sign'] ?? '3';
-
-                // KIS 는 prdy_vrss/prdy_ctrt 를 이미 부호 있는 값(예: -500, -0.14)으로 준다.
-                // 단순 -$change 는 하락(sign 4/5) 시 이중 부정(+0.14)이 되어 부호가 뒤집힌다.
-                // sign 기준으로 abs 를 강제해 부호를 확정한다 — WS fetchDomesticBatch 및
-                // 해외 fetchOverseasPriceFromKis 와 동일한 견고 처리(부호 출처 무관).
-                if ($sign === '4' || $sign === '5') { // 하한/하락
-                    $change = -abs($change);
-                    $changePercent = -abs($changePercent);
-                } else { // 상한/상승/보합
-                    $change = abs($change);
-                    $changePercent = abs($changePercent);
-                }
-
-                $result = [
-                    'price' => $price,
-                    'change_amount' => $change,
-                    'change_percent' => $changePercent,
-                ];
-                
-                Cache::put($lastSuccessKey, $result, 86400); // Cache for 24 hours
-                return $result;
-            }
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Failed to fetch domestic price from KIS: " . $e->getMessage());
-        }
-        
-        // Fallback to last successful price cache if current API call fails
-        $fallback = Cache::get($lastSuccessKey);
-        if ($fallback) {
-            \Illuminate\Support\Facades\Log::info("Using fallback KIS price for {$ticker} due to API failure/rate limit");
-            return $fallback;
-        }
-        
-        return null;
+        return $this->tossPriceFetcher->fetchSingle($ticker);
     }
 
-    private function getStockName($ticker)
+    /**
+     * 종목명 반환 — TossStockMaster 캐시 우선, 폴백 = 심볼 그대로.
+     *
+     * Phase 7: 하드코딩 배열·JSON 파일 직접 로드를 제거하고
+     * TossStockMaster 에 위임한다. 캐시 TTL 1일이므로 빠름.
+     *
+     * 지수 심볼(NQ=F·KOSPI200 등)은 호출부에서 별도 처리하므로
+     * 이 메서드는 폴백만 수행하면 된다.
+     *
+     * @param  string $ticker  앱 내부 심볼 (접미사 포함/미포함 모두 가능)
+     * @return string
+     */
+    private function getStockName(string $ticker): string
     {
-        $names = [
-            'TSLA' => 'Tesla, Inc.',
-            'AAPL' => 'Apple Inc.',
-            'NVDA' => 'NVIDIA Corporation',
-            'MSFT' => 'Microsoft Corporation',
-            'AMZN' => 'Amazon.com, Inc.',
-            'GOOGL' => 'Alphabet Inc.',
-            'USDKRW=X' => '원/달러 환율',
-            '0167A0.KS' => 'SOL AI반도체TOP2플러스',
-            '0167A0' => 'SOL AI반도체TOP2플러스',
-            '0167AO.KS' => 'SOL AI반도체TOP2플러스',
-            '0167AO' => 'SOL AI반도체TOP2플러스',
-            '005930.KS' => '삼성전자',
-            '005930' => '삼성전자',
-            '000660.KS' => 'SK하이닉스',
-            '000660' => 'SK하이닉스',
-            '035420.KS' => 'NAVER',
-            '035420' => 'NAVER',
-            '035720.KS' => '카카오',
-            '035720' => '카카오',
-        ];
-
-        if (isset($names[$ticker])) {
-            return $names[$ticker];
-        }
-
-        $cleanTicker = strtoupper($ticker);
-
-        // 국내 종목: krx_stocks.json 에서 한글명 조회
-        if (preg_match('/(\.KS|\.KQ)$/', $cleanTicker) || preg_match('/^\d{6}$/', $cleanTicker)) {
-            $code = preg_replace('/(\.KS|\.KQ)$/', '', $cleanTicker);
-            $filePath = storage_path('app/krx_stocks.json');
-            if (file_exists($filePath)) {
-                $stocks = json_decode(file_get_contents($filePath), true);
-                if (is_array($stocks)) {
-                    foreach ($stocks as $stock) {
-                        if ($stock['code'] === $code) {
-                            return $stock['name'];
-                        }
-                    }
-                }
-            }
-        }
-
-        // 미국 종목: us_stocks.json 에서 한글명 조회 (정적 캐시로 파일 중복 로드 방지)
-        static $usStocksMap = null;
-        if ($usStocksMap === null) {
-            $usPath = storage_path('app/us_stocks.json');
-            if (file_exists($usPath)) {
-                $raw = json_decode(file_get_contents($usPath), true);
-                $usStocksMap = [];
-                if (is_array($raw)) {
-                    foreach ($raw as $s) {
-                        $usStocksMap[$s['symbol']] = $s;
-                    }
-                }
-            } else {
-                $usStocksMap = [];
-            }
-        }
-        if (isset($usStocksMap[$cleanTicker])) {
-            $s = $usStocksMap[$cleanTicker];
-            // 한글명이 영문명과 다를 때만 한글명을 반환 (같으면 영문명만)
-            return ($s['koName'] !== $s['enName']) ? $s['koName'] : $s['enName'];
-        }
-
-        return $ticker . ' Inc.';
+        return $this->stockMaster->getName($ticker);
     }
 
     public function searchStocks(Request $request)
@@ -1834,16 +1097,15 @@ class StockController extends Controller
             }
 
             // 1-b. DB stocks(KR) 검색 — krx_stocks.json 에 없는 종목(SOL ETF 등)을 보완
-            // symbol 또는 name 에 검색어 포함 시 추가 (초성은 DB 레벨 불가 → 이름/코드 LIKE 만)
+            // Phase 7: name 컬럼 삭제됨 → symbol LIKE 만 쿼리. name 은 accessor 경유.
             $dbResults = [];
             try {
                 $dbStocks = \App\Models\Stock::where('market', 'KR')
                     ->where(function ($q) use ($queryLower) {
-                        $q->whereRaw('LOWER(symbol) LIKE ?', ['%' . $queryLower . '%'])
-                          ->orWhereRaw('LOWER(name) LIKE ?', ['%' . $queryLower . '%']);
+                        $q->whereRaw('LOWER(symbol) LIKE ?', ['%' . $queryLower . '%']);
                     })
                     ->limit(20)
-                    ->get(['symbol', 'name', 'exchange']);
+                    ->get(['id', 'symbol', 'exchange']);
 
                 foreach ($dbStocks as $dbStock) {
                     // krx_stocks.json 결과와 중복이면 건너뜀
@@ -2253,142 +1515,6 @@ class StockController extends Controller
     private function getKrMarketSessionInfo($timestamp)
     {
         return $this->sessionService->getKrSession((int)$timestamp);
-    }
-
-    /**
-     * 미국 주식 현재가를 KIS API 로 조회한다.
-     *
-     * 주간거래(Blue Ocean ATS, 20:00~04:00 ET) 시간대에는 정규장 EXCD(NAS/NYS/AMS)가
-     * 전일 종가(고정값)를 반환하므로, 주간거래 전용 코드를 먼저 시도한다:
-     *   - BAQ : Nasdaq Blue Ocean (나스닥 상장 주간거래)
-     *   - BAY : NYSE Blue Ocean   (뉴욕거래소 상장 주간거래)
-     *   - BAA : AMEX Blue Ocean   (아멕스 상장 주간거래)
-     * 주간거래 코드로 값을 얻지 못하면 정규장 코드(NAS/NYS/AMS)로 폴백한다.
-     * 정규장/프리/애프터 시간대에는 정규장 코드를 우선 사용한다.
-     *
-     * [성능 최적화] EXCD 프로빙 결과 캐시:
-     *   처음 한 번 어느 거래소에서 성공했는지를 "세션 그룹 + 종목" 단위로 캐싱한다.
-     *   캐시 히트 시 해당 거래소에 바로 1회만 호출 → 최대 6회 → 1~2회로 단축.
-     *   세션 그룹: 정규/프리/애프터 = "regular", 주간거래 = "overnight"
-     *   (주간거래 세션이 전환되면 EXCD 도 달라져야 하므로 그룹별 분리)
-     *   캐시 TTL: 하루 (주간→정규 전환 시 폴백이 자동으로 재탐색 후 재캐싱)
-     */
-    private function fetchOverseasPriceFromKis($ticker)
-    {
-        $apiUrl = env('KIS_API_URL', 'https://openapivts.koreainvestment.com:29443');
-        $appKey = env('KIS_APP_KEY');
-        $appSecret = env('KIS_APP_SECRET');
-
-        if (empty($appKey) || empty($appSecret) || $appKey === 'your_app_key_here') {
-            return null;
-        }
-
-        $lastSuccessKey = "kis_last_successful_overseas_price_{$ticker}";
-
-        // 세션 판정 후 시도 순서 결정 — 세션별 EXCD 우선순위가 다르다
-        $session = $this->getUsMarketSessionInfo(time());
-
-        // 세션 그룹: 4그룹으로 분리 (이전 이진 regular/overnight → 세션별 분리)
-        // 이전: 프리/애프터/정규 = "regular" 동일 그룹 → BAQ가 "regular" 에 캐싱돼 정규장을 오염
-        // 수정: 세션마다 별도 캐시 키 → 프리마켓 BAQ 캐시가 정규장에 히트하지 않음
-        if ($session === '정규장') {
-            $sessionGroup = '정규장';
-            // 정규장: BAQ/BAY/BAA(Blue Ocean) 완전 제외 — stale 장외값 오염 방지
-            $allExchanges = ['NAS', 'NYS', 'AMS'];
-        } elseif ($session === '프리마켓') {
-            $sessionGroup = '프리마켓';
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
-        } elseif ($session === '애프터마켓') {
-            $sessionGroup = '애프터마켓';
-            $allExchanges = ['NAS', 'NYS', 'AMS', 'BAQ', 'BAY', 'BAA'];
-        } elseif ($session === '주간거래') {
-            $sessionGroup = '주간거래';
-            $allExchanges = ['BAQ', 'BAY', 'BAA', 'NAS', 'NYS', 'AMS'];
-        } else {
-            // 장마감·unknown: 안전하게 정규장 코드만
-            $sessionGroup = 'unknown';
-            $allExchanges = ['NAS', 'NYS', 'AMS'];
-        }
-
-        // 종목별·세션별로 이전에 성공한 EXCD 캐시 조회
-        // → 히트 시 해당 거래소를 맨 앞으로 배치해 1~2회 만에 조회 완료
-        // → 세션별로 분리됐으므로 프리마켓 BAQ 캐시가 정규장에 절대 히트하지 않음
-        $excdCacheKey = "kis_excd_{$ticker}_{$sessionGroup}";
-        $cachedExcd = Cache::get($excdCacheKey);
-        // 캐시된 EXCD 가 현재 세션 허용 목록에 있을 때만 맨 앞으로 prepend 한다.
-        // (이중 방어: 정규장에 혹시 BAQ 같은 비허용 EXCD 가 캐시돼 있어도 절대 1순위가 되지 않음
-        //  — KisParallelPriceFetcher 와 동일한 안전장치로 두 구현을 일관되게 맞춘다.)
-        if ($cachedExcd !== null && in_array($cachedExcd, $allExchanges, true)) {
-            // 성공 거래소를 맨 앞에 두되, 나머지 폴백도 그대로 유지
-            $exchanges = array_merge(
-                [$cachedExcd],
-                array_values(array_filter($allExchanges, fn($e) => $e !== $cachedExcd))
-            );
-        } else {
-            $exchanges = $allExchanges;
-        }
-
-        try {
-            $accessToken = $this->getAccessToken();
-            $client = new Client();
-
-            foreach ($exchanges as $exchange) {
-                try {
-                    $response = $client->get("{$apiUrl}/uapi/overseas-price/v1/quotations/price", [
-                        'headers' => [
-                            'content-type' => 'application/json',
-                            'authorization' => "Bearer {$accessToken}",
-                            'appkey' => $appKey,
-                            'appsecret' => $appSecret,
-                            'tr_id' => 'HHDFS00000300',
-                        ],
-                        'query' => [
-                            'AUTH' => '',
-                            'EXCD' => $exchange,
-                            'SYMB' => $ticker,
-                        ]
-                    ]);
-
-                    $data = json_decode($response->getBody()->getContents(), true);
-                    if (isset($data['output']['last']) && (float)$data['output']['last'] > 0) {
-                        $output = $data['output'];
-                        $result = [
-                            'price' => (float)$output['last'],
-                            'change_amount' => (float)$output['diff'],
-                            'change_percent' => (float)$output['rate'],
-                            'sign' => $output['sign'] ?? '3',
-                            'excd' => $exchange, // 디버깅·로그용
-                        ];
-
-                        if ($result['sign'] === '4' || $result['sign'] === '5') {
-                            $result['change_amount'] = -abs($result['change_amount']);
-                            $result['change_percent'] = -abs($result['change_percent']);
-                        } else {
-                            $result['change_amount'] = abs($result['change_amount']);
-                            $result['change_percent'] = abs($result['change_percent']);
-                        }
-
-                        // 성공한 EXCD 를 세션 그룹별로 캐싱 — 다음 사이클부터 즉시 1회 적중
-                        if ($cachedExcd !== $exchange) {
-                            Cache::put($excdCacheKey, $exchange, 86400); // 24시간
-                        }
-                        Cache::put($lastSuccessKey, $result, 86400); // 24 hours
-                        return $result;
-                    }
-                } catch (\Exception $ex) {
-                    continue;
-                }
-            }
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Failed to fetch overseas price from KIS: " . $e->getMessage());
-        }
-
-        $fallback = Cache::get($lastSuccessKey);
-        if ($fallback) {
-            return $fallback;
-        }
-
-        return null;
     }
 
     private function accumulateOverseasRealTimePrice($ticker, $price, $lastYahooTime, bool $isFreshKisPrice = true)

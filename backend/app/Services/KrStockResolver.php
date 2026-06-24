@@ -18,21 +18,8 @@ use Illuminate\Support\Facades\Log;
  */
 class KrStockResolver
 {
-    /** ETF 브랜드 키워드 (대소문자 무관) */
-    private const ETF_KEYWORDS = [
-        'ETF', 'KODEX', 'TIGER', 'PLUS', 'SOL', 'ACE', 'KBSTAR', 'ARIRANG',
-        'KOSEF', 'HANARO', 'FOCUS', 'TIMEFOLIO', 'TREX', 'KTOP',
-    ];
-
-    /** StockController::getStockName 의 KR 이름 맵 (하드코딩 동기화 유지) */
-    private const KR_NAME_MAP = [
-        '0167A0' => 'SOL AI반도체TOP2플러스',
-        '0167AO' => 'SOL AI반도체TOP2플러스',
-        '005930' => '삼성전자',
-        '000660' => 'SK하이닉스',
-        '035420' => 'NAVER',
-        '035720' => '카카오',
-    ];
+    // ETF_KEYWORDS·KR_NAME_MAP 은 Phase 7 이후 제거됨.
+    // name·type 은 TossStockMaster accessor 가 제공하므로 로컬 판정 불필요.
 
     /**
      * 들어온 symbol 에서 .KS/.KQ 접미사를 제거해 정규화된 6자리 코드 반환.
@@ -70,52 +57,21 @@ class KrStockResolver
     /**
      * firstOrCreate 의 기본값(attributes) 배열 구성.
      *
+     * Phase 7 이후: name·type·currency 컬럼이 삭제됐으므로 포함하지 않는다.
+     * 종목명·타입·통화는 TossStockMaster accessor 가 제공한다.
+     *
      * @param  string      $code       정규화된 6자리 코드
      * @param  string      $rawSymbol  원본 심볼 (접미사 추론에 사용)
-     * @param  string|null $nameHint   외부 힌트 종목명
+     * @param  string|null $nameHint   외부 힌트 종목명 (현재 미사용 — accessor 에서 처리)
      * @return array<string, mixed>
      */
     private function buildAttributes(string $code, string $rawSymbol, ?string $nameHint): array
     {
-        $name     = $this->resolveName($code, $nameHint);
-        $type     = $this->resolveType($name);
         $exchange = $this->resolveExchange($code, $rawSymbol);
 
         return [
-            'name'     => $name,
-            'type'     => $type,
-            'currency' => 'KRW',
             'exchange' => $exchange,
         ];
-    }
-
-    /**
-     * 종목명 결정 우선순위:
-     * 1) nameHint (프론트 제공)
-     * 2) krx_stocks.json code 매칭
-     * 3) KR_NAME_MAP 하드코딩
-     * 4) 코드 자체를 이름으로 사용
-     *
-     * @param  string      $code
-     * @param  string|null $nameHint
-     * @return string
-     */
-    private function resolveName(string $code, ?string $nameHint): string
-    {
-        if ($nameHint !== null && trim($nameHint) !== '') {
-            return trim($nameHint);
-        }
-
-        $fromJson = $this->lookupKrxJson($code);
-        if ($fromJson !== null) {
-            return $fromJson['name'];
-        }
-
-        if (isset(self::KR_NAME_MAP[$code])) {
-            return self::KR_NAME_MAP[$code];
-        }
-
-        return $code;
     }
 
     /**
@@ -144,23 +100,6 @@ class KrStockResolver
         }
 
         return null;
-    }
-
-    /**
-     * ETF 여부 판정: 이름에 ETF 브랜드 키워드가 포함되면 'etf', 아니면 'stock'.
-     *
-     * @param  string $name
-     * @return string  'etf'|'stock'
-     */
-    private function resolveType(string $name): string
-    {
-        $upper = strtoupper($name);
-        foreach (self::ETF_KEYWORDS as $kw) {
-            if (strpos($upper, strtoupper($kw)) !== false) {
-                return 'etf';
-            }
-        }
-        return 'stock';
     }
 
     /**

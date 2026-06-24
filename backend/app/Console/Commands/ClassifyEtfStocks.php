@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
-use App\Models\Stock;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /**
  * ETF 종목 type 보정 커맨드.
@@ -64,45 +62,13 @@ class ClassifyEtfStocks extends Command
 
     public function handle(): int
     {
-        $isDryRun = (bool)$this->option('dry-run');
-        $this->info($isDryRun ? '[DRY-RUN] 업데이트 없이 대상 목록만 출력합니다.' : 'ETF type 보정을 시작합니다.');
-
-        // KR 종목 중 아직 stock 으로 분류된 것 대상
-        $stocks = Stock::where('market', 'KR')->where('type', 'stock')->get(['id', 'symbol', 'name']);
-
-        $targets = [];
-        foreach ($stocks as $stock) {
-            $nameLower = mb_strtolower($stock->name, 'UTF-8');
-
-            foreach (self::ETF_NAME_PATTERNS as $pattern) {
-                if (mb_strpos($nameLower, mb_strtolower($pattern, 'UTF-8'), 0, 'UTF-8') !== false) {
-                    $targets[] = $stock;
-                    break;
-                }
-            }
-        }
-
-        $count = count($targets);
-        $this->info("대상 종목 수: {$count}건");
-
-        if ($isDryRun) {
-            foreach ($targets as $t) {
-                $this->line("  [{$t->symbol}] {$t->name}");
-            }
-            return self::SUCCESS;
-        }
-
-        if ($count === 0) {
-            $this->info('보정할 종목이 없습니다.');
-            return self::SUCCESS;
-        }
-
-        $ids = array_column($targets, 'id');
-
-        DB::table('stocks')->whereIn('id', $ids)->update(['type' => 'etf']);
-
-        $this->info("ETF 분류 완료: {$count}건 type='etf' 으로 갱신.");
-        $this->warn('주의: 종목명 패턴 기반 best-effort — 정확도는 KRX ETF 목록 API 활용 시 개선 가능.');
+        // Phase 7 마이그레이션으로 stocks 테이블의 name·type 컬럼이 삭제됨.
+        // 종목 타입은 TossStockMaster accessor(getTypeAttribute)가 제공하며,
+        // DB 직접 update 방식은 더 이상 유효하지 않다.
+        // 이 커맨드는 재설계 전까지 안전하게 종료한다.
+        $this->warn('[stocks:classify-etf] 이 커맨드는 Phase 7 이후 비활성화됐습니다.');
+        $this->warn('name·type 컬럼이 stocks 테이블에서 제거됐으며, ETF 타입은 TossStockMaster accessor가 제공합니다.');
+        $this->info('KRX ETF 목록 API 기반 재설계 전까지 실행하지 마십시오.');
 
         return self::SUCCESS;
     }

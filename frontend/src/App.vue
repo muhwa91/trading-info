@@ -186,44 +186,70 @@
               <span class="text-xs font-extrabold text-white tracking-wider uppercase">지수 · 나스닥 / 코스피</span>
             </button>
             <!-- visibleIndexTickers: 나스닥 + (정규장=종합지수 / 야간=야간선물 / 그 외 없음) -->
-            <div v-show="!indexCollapsed" :class="['grid gap-4 shrink-0 items-start transition-all duration-300', visibleIndexTickers.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2']">
+            <div v-show="!indexCollapsed" :class="['grid gap-4 shrink-0 items-stretch transition-all duration-300', visibleIndexTickers.length === 1 ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2']">
             <div
               v-for="ticker in visibleIndexTickers"
               :key="ticker"
-              class="h-72 sm:h-80 lg:h-90 card bg-base-100/45 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/5 transition-all duration-300 p-4 flex flex-col gap-3 rounded-2xl card-hover"
+              :class="[
+                'h-72 sm:h-80 lg:h-90 rounded-2xl transition-all duration-300',
+                indexDisplayMode(ticker) === 'chart'
+                  ? ''
+                  : 'overflow-hidden bg-base-100/45 backdrop-blur-md border border-base-content/8 hover:border-indigo-500/25 hover:shadow-lg hover:shadow-indigo-500/5 card-hover'
+              ]"
             >
-              <div class="flex-1 min-h-0">
-                <template v-if="indexStockData[ticker]">
-                  <StockChart
-                    v-if="indexDisplayMode(ticker) === 'chart'"
-                    :key="`${ticker}_${indexTimeframes[ticker]}`"
-                    :timeframe="indexTimeframes[ticker]"
-                    :ticker="ticker"
-                    :name="indexStockData[ticker].name"
-                    :current-price="indexStockData[ticker].current_price"
-                    :change-amount="indexStockData[ticker].change_amount"
-                    :change-percent="indexStockData[ticker].change_percent"
-                    :candles="indexStockData[ticker].candles"
-                    :session="indexStockData[ticker].session || ''"
-                    @timeframe-change="handleIndexTimeframeChange(ticker, $event)"
-                  />
-                  <div v-else class="h-full flex flex-col items-center justify-center gap-2 select-none px-4 text-center">
-                    <span class="text-xs font-bold text-base-content/50 tracking-widest uppercase">{{ indexStockData[ticker].name }}</span>
-                    <span class="text-[2.5rem] font-black font-mono tracking-tight leading-none" :class="indexQuoteColor(ticker)">
-                      {{ formatIndexValue(indexStockData[ticker].current_price) }}
+              <template v-if="indexStockData[ticker]">
+                <StockChart
+                  v-if="indexDisplayMode(ticker) === 'chart'"
+                  :key="`${ticker}_${indexTimeframes[ticker]}`"
+                  :timeframe="indexTimeframes[ticker]"
+                  :ticker="ticker"
+                  :name="indexStockData[ticker].name"
+                  :current-price="indexStockData[ticker].current_price"
+                  :change-amount="indexStockData[ticker].change_amount"
+                  :change-percent="indexStockData[ticker].change_percent"
+                  :candles="indexStockData[ticker].candles"
+                  :session="indexStockData[ticker].session || ''"
+                  @timeframe-change="handleIndexTimeframeChange(ticker, $event)"
+                />
+                <!-- quote 모드 (코스피 야간선물 / NQ 휴장 / 코스피 장마감 등) -->
+                <div v-else class="h-full flex flex-col items-center justify-center gap-0 select-none px-6 py-5">
+                  <!-- 상단: 티커 배지 + 종목명 -->
+                  <div class="flex items-center gap-2 mb-4">
+                    <span class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
+                      {{ ticker }}
                     </span>
-                    <div class="flex items-center gap-2 text-sm font-bold font-mono" :class="indexQuoteColor(ticker)">
-                      <span>{{ indexQuoteIsUp(ticker) ? '▲' : '▼' }}</span>
-                      <span>{{ (indexQuoteIsUp(ticker) ? '+' : '') + formatIndexValue(indexStockData[ticker].change_amount) }}</span>
-                      <span class="opacity-75">({{ (indexQuoteIsUp(ticker) ? '+' : '') + Number(indexStockData[ticker].change_percent).toFixed(2) }}%)</span>
-                    </div>
-                    <span class="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mt-1 px-2 py-0.5 rounded-full bg-cyan-500/10 border border-cyan-500/25">{{ indexQuoteLabel(ticker) }}</span>
+                    <span class="text-xs font-bold text-base-content/55 tracking-widest">{{ indexStockData[ticker].name }}</span>
                   </div>
-                </template>
-                <div v-else class="h-full flex flex-col items-center justify-center gap-3">
-                  <span class="loading loading-spinner text-indigo-500/60 loading-sm"></span>
-                  <span class="text-[10px] text-base-content/35 font-mono tracking-widest uppercase">Loading Index...</span>
+                  <!-- 중앙: 큰 가격 숫자 -->
+                  <span
+                    class="text-[2.75rem] font-black font-mono tracking-tight leading-none mb-3"
+                    :class="indexQuoteColor(ticker)"
+                  >
+                    {{ formatIndexValue(indexStockData[ticker].current_price) }}
+                  </span>
+                  <!-- 등락액 + 퍼센트 -->
+                  <div class="flex items-center gap-1.5 text-sm font-bold font-mono mb-4" :class="indexQuoteColor(ticker)">
+                    <span class="text-base leading-none">{{ indexQuoteIsUp(ticker) ? '▲' : '▼' }}</span>
+                    <span>{{ (indexQuoteIsUp(ticker) ? '+' : '') + formatIndexValue(indexStockData[ticker].change_amount) }}</span>
+                    <span class="opacity-70 text-xs">({{ (indexQuoteIsUp(ticker) ? '+' : '') + Number(indexStockData[ticker].change_percent).toFixed(2) }}%)</span>
+                  </div>
+                  <!-- 하단: 세션 상태 배지 -->
+                  <span
+                    :class="[
+                      'text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-lg border leading-tight',
+                      indexQuoteLabel(ticker) === '야간 거래중' || indexQuoteLabel(ticker) === '거래중'
+                        ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/25'
+                        : indexQuoteLabel(ticker) === '정규장'
+                          ? 'text-pink-400 bg-pink-500/8 border-pink-500/20'
+                          : 'text-base-content/45 bg-base-200/40 border-base-content/10'
+                    ]"
+                  >{{ indexQuoteLabel(ticker) }}</span>
                 </div>
+              </template>
+              <!-- 로딩 -->
+              <div v-else class="h-full flex flex-col items-center justify-center gap-3">
+                <span class="loading loading-spinner text-indigo-500/60 loading-sm"></span>
+                <span class="text-[10px] text-base-content/35 font-mono tracking-widest uppercase">Loading Index...</span>
               </div>
             </div>
           </div>

@@ -6,9 +6,8 @@ namespace App\Services;
 
 use App\Models\Price;
 use App\Models\Stock;
-use App\Services\Quote\KisDomesticQuoteProvider;
-use App\Services\Quote\KisOverseasQuoteProvider;
 use App\Services\Quote\QuoteProviderInterface;
+use App\Services\Quote\TossQuoteProvider;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -35,15 +34,15 @@ class PriceService
      */
     private const KIS_CALL_INTERVAL_US = 100000;
 
-    private KisDomesticQuoteProvider $domestic;
-    private KisOverseasQuoteProvider $overseas;
+    /**
+     * KR + US 종목 공통 프로바이더 — Phase 4: TossQuoteProvider (토스 /prices 배치)
+     * KR: 토스 배치 (Phase 3~), US: 토스 + Yahoo 폴백 (Phase 4~).
+     */
+    private TossQuoteProvider $tossProvider;
 
-    public function __construct(
-        KisDomesticQuoteProvider $domestic,
-        KisOverseasQuoteProvider $overseas
-    ) {
-        $this->domestic = $domestic;
-        $this->overseas = $overseas;
+    public function __construct(TossQuoteProvider $tossProvider)
+    {
+        $this->tossProvider = $tossProvider;
     }
 
     /**
@@ -155,8 +154,8 @@ class PriceService
     /**
      * prices 테이블 upsert: (stock_id, session) 고유 키로 최신 1건 유지.
      *
-     * regular_close: US 종목의 직전 정규장 종가(KIS output.base).
-     *   KisOverseasQuoteProvider 가 채워 반환하면 저장,
+     * regular_close: US 종목의 직전 정규장 종가(Yahoo regularMarketPrice).
+     *   TossQuoteProvider 가 채워 반환하면 저장,
      *   없으면(KR 종목 등) null 저장.
      *
      * @param array{
@@ -194,18 +193,14 @@ class PriceService
 
     /**
      * market 에 따라 적절한 QuoteProvider 반환.
-     * KR → KisDomesticQuoteProvider
-     * US → KisOverseasQuoteProvider
+     *
+     * Phase 4: KR + US → TossQuoteProvider (토스 + Yahoo 폴백)
      * 기타 → null
      */
     private function resolveProvider(Stock $stock): ?QuoteProviderInterface
     {
-        if ($stock->market === 'KR') {
-            return $this->domestic;
-        }
-
-        if ($stock->market === 'US') {
-            return $this->overseas;
+        if ($stock->market === 'KR' || $stock->market === 'US') {
+            return $this->tossProvider;  // TossQuoteProvider (Phase 4: KR+US 통합)
         }
 
         return null;

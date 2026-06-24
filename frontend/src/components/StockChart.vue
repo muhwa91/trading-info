@@ -3,58 +3,113 @@
 
     <!-- 차트 헤더 -->
     <div class="flex flex-col gap-1.5 mb-2.5 select-none pr-3.5">
-      <!-- 줄1: 티커 배지(좌) / 현재가·등락액(우) -->
-      <div class="flex items-center justify-between gap-2">
-        <!-- 좌: 티커 배지 -->
-        <span class="px-2 py-0.5 rounded-md text-[12px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
-          {{ ticker }}
-        </span>
+      <!-- 줄1: 좌(종목 블록) + 우(가격 블록) — 상단 정렬 -->
+      <div class="flex items-start justify-between gap-2">
 
-        <!-- 우: 현재가 + 등락액 -->
-        <div class="flex flex-row items-center shrink-0 gap-2">
-          <span
-            :class="[
-              'text-sm font-black font-mono transition-all duration-250 rounded px-1.5 py-0.5 leading-tight',
-              priceFlash === 'up'
-                ? 'bg-rose-500/18 text-rose-400 scale-105'
-                : '',
-              priceFlash === 'down'
-                ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
-                : '',
-              !priceFlash
-                ? (changePercent >= 0 ? 'text-rose-400' : 'text-sky-400')
-                : ''
-            ]"
-          >{{ formattedHeaderPrice }}</span>
-          <!-- 등락액(주가 변동) — 주가 우측 표기 -->
-          <span
-            v-if="changeAmount !== null"
-            :class="[
-              'text-xs font-bold font-mono leading-tight shrink-0',
-              changeAmount >= 0 ? 'text-rose-400' : 'text-sky-400'
-            ]"
-          >{{ formattedChangeAmount }}</span>
+        <!-- 좌: 종목 정보 블록 -->
+        <div class="flex flex-col gap-1 min-w-0">
+          <!-- 1행: 티커 배지 + 종목명 (같은 줄, baseline 정렬) -->
+          <div class="flex items-baseline gap-1.5 min-w-0">
+            <span class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-300 bg-indigo-500/12 border border-indigo-500/20 tracking-wider leading-tight shrink-0">
+              {{ ticker }}
+            </span>
+            <span class="text-sm font-black text-white/90 leading-tight truncate" :title="name">{{ name }}</span>
+            <span
+              v-if="formattedChangePercent !== null"
+              :class="[
+                'text-xs font-bold font-mono leading-tight shrink-0',
+                changePercent >= 0 ? 'text-rose-400' : 'text-sky-400'
+              ]"
+            >{{ formattedChangePercent }}</span>
+          </div>
+          <!-- 2행: 보조 배지 그룹 (MAX·실적) — 통일된 스타일로 한 줄 -->
+          <div class="flex items-center gap-1 flex-wrap">
+            <span
+              v-if="!isIndex && maxPrice !== null"
+              class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-amber-400/80 bg-amber-500/8 border border-amber-500/18 leading-tight shrink-0"
+            >MAX {{ formattedMaxPrice }}</span>
+            <span
+              v-if="earningsDate"
+              class="earnings-badge px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400/80 bg-indigo-500/8 border border-indigo-500/18 leading-tight shrink-0"
+            >실적 {{ earningsDate }}</span>
+          </div>
+        </div>
+
+        <!-- 우: 현재가 + 등락액 블록 (우측 정렬) -->
+        <div class="flex flex-col items-end shrink-0 gap-0.5">
+          <!-- 달러 현재가 + 달러 등락액 -->
+          <div class="flex flex-row items-center gap-1.5">
+            <span
+              :class="[
+                'text-sm font-black font-mono transition-all duration-250 rounded px-1.5 py-0.5 leading-tight',
+                priceFlash === 'up'
+                  ? 'bg-rose-500/18 text-rose-400 scale-105'
+                  : '',
+                priceFlash === 'down'
+                  ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
+                  : '',
+                !priceFlash
+                  ? (changePercent >= 0 ? 'text-rose-400' : 'text-sky-400')
+                  : ''
+              ]"
+            >{{ formattedHeaderPrice }}</span>
+            <!-- 등락액(주가 변동) — 주가 우측 표기 (현재가와 동일한 변동 깜빡임 효과) -->
+            <span
+              v-if="changeAmount !== null"
+              :class="[
+                'text-xs font-bold font-mono leading-tight shrink-0 transition-all duration-250 rounded px-1 py-0.5',
+                priceFlash === 'up'
+                  ? 'bg-rose-500/18 text-rose-400 scale-105'
+                  : '',
+                priceFlash === 'down'
+                  ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
+                  : '',
+                !priceFlash
+                  ? (changeAmount >= 0 ? 'text-rose-400' : 'text-sky-400')
+                  : ''
+              ]"
+            >{{ formattedChangeAmount }}</span>
+          </div>
+          <!-- 원화 환산 줄 — 미국 주식이고 환율이 있을 때만 (달러 줄과 동일 효과·색) -->
+          <div
+            v-if="formattedKrwCurrentPrice !== null"
+            class="flex flex-row items-center gap-1.5"
+          >
+            <span
+              :class="[
+                'text-sm font-black font-mono transition-all duration-250 rounded px-1.5 py-0.5 leading-tight',
+                priceFlash === 'up'
+                  ? 'bg-rose-500/18 text-rose-400 scale-105'
+                  : '',
+                priceFlash === 'down'
+                  ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
+                  : '',
+                !priceFlash
+                  ? (changePercent >= 0 ? 'text-rose-400' : 'text-sky-400')
+                  : ''
+              ]"
+            >{{ formattedKrwCurrentPrice }}</span>
+            <span
+              v-if="formattedKrwChangeAmount !== null"
+              :class="[
+                'text-xs font-bold font-mono leading-tight shrink-0 transition-all duration-250 rounded px-1 py-0.5',
+                priceFlash === 'up'
+                  ? 'bg-rose-500/18 text-rose-400 scale-105'
+                  : '',
+                priceFlash === 'down'
+                  ? 'bg-sky-500/18 text-sky-400 scale-105 glow-active'
+                  : '',
+                !priceFlash
+                  ? (krwChangeAmount >= 0 ? 'text-rose-400' : 'text-sky-400')
+                  : ''
+              ]"
+            >{{ formattedKrwChangeAmount }}</span>
+          </div>
         </div>
       </div>
 
-      <!-- 줄2: 종목명 — 항상 독립 행 -->
-      <span class="text-sm font-black text-white/90 leading-tight break-all" :title="name">{{ name }}</span>
-
-      <!-- 줄3: MAX 배지 — 비지수·최고가 있을 때만 표시 -->
-      <span
-        v-if="!isIndex && maxPrice !== null"
-        class="px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-amber-400 bg-amber-500/8 border border-amber-500/20 self-start leading-tight"
-      >MAX {{ formattedMaxPrice }}</span>
-
-      <!-- 줄4: 실적 배지(좌) + 컴팩트 타임프레임 셀렉트(우측) -->
-      <!-- 컴팩트(400px 미만): 셀렉트 표시 / 와이드: 셀렉트 숨김. 실적 배지는 폭 무관 표시 -->
+      <!-- 줄2: 컴팩트 타임프레임 셀렉트 — 400px 미만에서만 표시 -->
       <div class="flex items-center timeframe-row4">
-        <!-- 실적 발표일 배지 -->
-        <span
-          v-if="earningsDate"
-          class="earnings-badge px-1.5 py-0.5 rounded text-[11px] font-extrabold font-mono text-indigo-400 bg-indigo-500/8 border border-indigo-500/20 shrink-0 leading-tight"
-        >실적 {{ earningsDate }}</span>
-
         <!-- 좁을 때(카드 폭 400px 미만) 타임프레임 셀렉트 — 우측 정렬 -->
         <select
           class="timeframe-select-compact ml-auto mr-2 input input-xs bg-base-200/70 border border-base-content/10 rounded-lg font-bold font-mono text-[11px] text-base-content/70 focus:outline-none focus:border-indigo-500/50 cursor-pointer"
@@ -101,7 +156,7 @@
       <div
         v-if="currentPrice !== null && priceCoordinate !== null"
         :class="[
-          'absolute right-1 z-30 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
+          'absolute right-3 z-30 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l rounded-l-md',
           changePercent >= 0
             ? 'bg-rose-600 border-rose-500 shadow-rose-900/35'
             : 'bg-sky-600 border-sky-500 shadow-sky-900/35'
@@ -113,14 +168,14 @@
           clipPath: 'polygon(7px 0%, 100% 0%, 100% 100%, 7px 100%, 0% 50%)'
         }"
       >
-        <div class="text-[11px] font-black mb-1 tracking-tight">{{ formattedPrice }}</div>
-        <div class="text-[10px] opacity-95 whitespace-nowrap">{{ formattedChangePercent }}</div>
+        <div :class="['font-black mb-1 tracking-tight', isIndex ? 'text-[9px]' : 'text-[11px]']">{{ formattedPrice }}</div>
+        <div :class="['opacity-95 whitespace-nowrap', isIndex ? 'text-[9px]' : 'text-[10px]']">{{ formattedChangePercent }}</div>
       </div>
 
       <!-- 평단가 오버레이 -->
       <div
         v-if="!isIndex && avgPrice !== null && avgPriceCoordinate !== null"
-        class="absolute right-1 z-20 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
+        class="absolute right-3 z-20 flex flex-col items-center justify-center font-black pl-2 pr-1 py-1 pointer-events-none select-none text-white font-mono leading-none shadow-xl border-y border-l bg-warning border-warning/60 shadow-warning/20 rounded-l-md"
         :style="{
           top: avgPriceCoordinate + 'px',
           transform: 'translateY(-50%)',
@@ -317,6 +372,33 @@ const isKorean = computed(() => {
   // KRX 코드: .KS/.KQ 접미사, 6자리 숫자, 또는 신형 영숫자 코드(예: 0167A0)
   const t = props.ticker;
   return /(\.KS|\.KQ)$/i.test(t) || /^\d{4}[0-9A-Za-z]{2}$/.test(t) || /^\d+$/.test(t);
+});
+
+// 미국 주식일 때 원화 환산 현재가 (환율이 없거나 0이면 null)
+const krwCurrentPrice = computed(() => {
+  if (isKorean.value || isIndex.value) return null;
+  if (!props.currentPrice || !props.usdKrwRate || props.usdKrwRate <= 0) return null;
+  return Math.round(props.currentPrice * props.usdKrwRate);
+});
+
+// 미국 주식일 때 원화 환산 증감액
+const krwChangeAmount = computed(() => {
+  if (isKorean.value || isIndex.value) return null;
+  if (props.changeAmount === null || !props.usdKrwRate || props.usdKrwRate <= 0) return null;
+  return Math.round(props.changeAmount * props.usdKrwRate);
+});
+
+// 원화 현재가 포맷 (594,500원)
+const formattedKrwCurrentPrice = computed(() => {
+  if (krwCurrentPrice.value === null) return null;
+  return `${krwCurrentPrice.value.toLocaleString()}원`;
+});
+
+// 원화 증감액 포맷 (▲ 3,600원 / ▼ 3,600원)
+const formattedKrwChangeAmount = computed(() => {
+  if (krwChangeAmount.value === null) return null;
+  const arrow = krwChangeAmount.value >= 0 ? '▲' : '▼';
+  return `${arrow} ${Math.abs(krwChangeAmount.value).toLocaleString()}원`;
 });
 
 const formattedPrice = computed(() => {
@@ -975,13 +1057,9 @@ onBeforeUnmount(() => {
 .timeframe-row {
   display: flex;
 }
-/* 줄4 wrapper: 와이드에서는 셀렉트가 none이므로 기본 숨김.
-   단, 실적 배지(.earnings-badge)가 있으면 표시. */
+/* 컴팩트 셀렉트 행: 와이드에서는 숨김 (타임프레임 버튼 행 사용) */
 .timeframe-row4 {
   display: none;
-}
-.timeframe-row4:has(.earnings-badge) {
-  display: flex;
 }
 
 /* 카드 폭 400px 미만: 와이드 버튼 행 숨기고 줄4(셀렉트+실적) 표시 */
