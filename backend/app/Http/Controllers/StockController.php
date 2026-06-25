@@ -425,14 +425,37 @@ class StockController extends Controller
             // 세션 라벨은 getUsMarketSessionInfo 가 주말·공휴일·주간거래(20:00~04:00 ET)를 모두 판정한다.
             // 주간거래는 다음 거래일로 이어지는 세션이라 'NY 오늘=거래일'로 막으면 안 된다(과거 휴장 오판 버그).
             $content['session'] = $session;
-            // 차트 베이스(Toss/Yahoo)를 source 에 반영한다.
+            // 차트 베이스(Toss/Yahoo)를 source 에 반영하되, 현재가의 실제 출처도 정직하게 표기한다.
             // $content['source'] 는 캐시된 차트 데이터가 이미 가지고 있는 베이스 라벨
-            // ('Toss (1d)', 'Yahoo Finance (1d)' 등). 이를 살려 KIS 현재가 오버레이 사실을 표기.
-            $baseSource = $content['source'] ?? 'Yahoo Finance';
-            if (strncmp($baseSource, 'Toss', 4) === 0) {
-                $content['source'] = 'Toss';
+            // ('Toss (1d)', 'Yahoo Finance (1d)' 등). $kisPrice['provider'] 와 $isFreshKisPrice 로
+            // 현재가가 실제로 어디서 왔는지(토스 라이브 / Yahoo 폴백 / 24h 캐시-지연)를 구분한다.
+            //   - provider=yahoo            → 'Yahoo 폴백 (현재가)'  (토스 불통 → Yahoo 폴백 중)
+            //   - provider=toss & 신선      → 기존대로 차트 베이스 반영 ('Toss' / 'Yahoo + Toss (현재가)')
+            //   - 신선 아님(24h stale 캐시) → '… 캐시(지연)' 로 지연 표기
+            //   - $kisPrice 자체 없음        → 기존 동작 유지
+            $baseSource     = $content['source'] ?? 'Yahoo Finance';
+            $priceProvider  = is_array($kisPrice) ? ($kisPrice['provider'] ?? null) : null;
+            $isTossBaseline = (strncmp($baseSource, 'Toss', 4) === 0);
+
+            if ($kisPrice === null) {
+                // 현재가 없음 — 기존 동작 유지
+                $content['source'] = $isTossBaseline ? 'Toss' : 'Yahoo + Toss (현재가)';
+            } elseif ($priceProvider === 'yahoo') {
+                // 토스 불통 → Yahoo 폴백으로 현재가를 채우는 중임을 명시
+                $content['source'] = $isFreshKisPrice ? 'Yahoo 폴백 (현재가)' : 'Yahoo 폴백 캐시(지연)';
+            } elseif (!$isFreshKisPrice) {
+                // 신선하지 않음 = 24h stale 폴백 캐시 사용 → 지연 표기
+                // 저장된 provider 가 있으면 접두로 붙여 출처도 함께 드러낸다(없으면 출처 없이 '캐시(지연)').
+                if ($priceProvider === 'toss') {
+                    $content['source'] = 'Toss 캐시(지연)';
+                } elseif ($priceProvider === 'yahoo') {
+                    $content['source'] = 'Yahoo 캐시(지연)';
+                } else {
+                    $content['source'] = '캐시(지연)';
+                }
             } else {
-                $content['source'] = 'Yahoo + Toss (현재가)';
+                // provider=toss & 신선 → 기존대로 차트 베이스를 반영
+                $content['source'] = $isTossBaseline ? 'Toss' : 'Yahoo + Toss (현재가)';
             }
             $content['is_trading_day'] = ($session !== '장마감');
             $content['name'] = $this->stockMaster->getName($ticker);

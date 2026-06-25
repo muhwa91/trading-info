@@ -354,6 +354,17 @@ class WebSocketAgentServer extends Command
         //    _freshness 보조키(90초)가 살아있으면 스킵, 만료 종목만 Yahoo HTTP 호출.
         //    완료 후 결과를 Cache::forever("{$cacheKey}_last") 에 저장해 다음 stale-restore 에 활용.
         $yahooRefreshStart = microtime(true);
+
+        // 6a. ── US regular_close 캐시 워밍 (out-of-band) ──────────────────────
+        //    H-2 최적화: fetchDomestic() 현재가 핫패스에서 Yahoo HTTP 동기 호출을 제거한 대신,
+        //    여기(전송·현재가갱신 이후 = 핫패스 밖)에서 cold 한 US 종목의 regular_close 만 데운다.
+        //    이미 캐시가 따뜻한 종목은 워머 내부에서 skip → 첫 사이클/ET자정 롤오버 직후에만 HTTP 발생.
+        try {
+            $this->tossPriceFetcher->warmRegularCloses($allTickers);
+        } catch (\Exception $e) {
+            $this->error("[regular_close워밍] 오류: " . $e->getMessage());
+        }
+
         try {
             $this->refreshYahooCache($uniquePairs);
         } catch (\Exception $e) {

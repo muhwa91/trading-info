@@ -206,6 +206,49 @@ class StockControllerTransmitPathTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // 12. [B-1] source 라벨 정직 표기 — 현재가 실제 출처(provider)·신선도 반영
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * @test
+     *
+     * 배경: source 라벨이 현재가 실제 출처와 무관하게 항상 'Toss'/'Yahoo + Toss (현재가)'
+     *       로 표기돼, Yahoo 폴백 중이거나 stale 캐시여도 'Toss' 로 가려졌다.
+     *
+     * 수정 후: $kisPrice['provider'] + $isFreshKisPrice 로 라벨을 정직하게 구성한다.
+     *   - provider=yahoo → 'Yahoo 폴백 (현재가)'
+     *   - !isFresh(24h stale) → '캐시(지연)' 표기
+     */
+    public function testUsSourceLabelReflectsProviderAndFreshness(): void
+    {
+        $usSrc = $this->getUsSourceLabelSection();
+
+        // provider 를 읽어 라벨을 분기하는지
+        $this->assertTrue(
+            (bool) preg_match("/\\\$kisPrice\\['provider'\\]/", $usSrc),
+            "US source 라벨이 \$kisPrice['provider'] 를 참조하지 않음 — 현재가 출처를 구분하지 못함."
+        );
+
+        // Yahoo 폴백 라벨 문구가 존재하는지
+        $this->assertTrue(
+            (bool) preg_match('/Yahoo 폴백/u', $usSrc),
+            "US source 라벨에 'Yahoo 폴백' 문구가 없음 — Yahoo 폴백 중임이 가려진다."
+        );
+
+        // 지연(stale) 표기가 존재하는지
+        $this->assertTrue(
+            (bool) preg_match('/캐시\(지연\)/u', $usSrc),
+            "US source 라벨에 '캐시(지연)' 표기가 없음 — 24h stale 캐시가 라이브처럼 보인다."
+        );
+
+        // 신선도 플래그를 라벨 분기에 사용하는지
+        $this->assertTrue(
+            (bool) preg_match('/\$isFreshKisPrice/', $usSrc),
+            "US source 라벨이 \$isFreshKisPrice 를 사용하지 않음 — stale 여부가 라벨에 반영되지 않는다."
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // 헬퍼
     // ──────────────────────────────────────────────────────────────────────
 
@@ -233,6 +276,26 @@ class StockControllerTransmitPathTest extends TestCase
         }
         // 4000바이트 — 한글 주석으로 멀티바이트가 많으므로 넉넉히
         return substr($src, $pos, 4000);
+    }
+
+    /**
+     * [B-1] source 라벨 구성 블록만 추출 — 차트 베이스/현재가 출처 분기.
+     * "// 차트 베이스" 주석부터 충분한 길이까지(멀티바이트 주석 대비 넉넉히).
+     */
+    private function getUsSourceLabelSection(): string
+    {
+        $src    = $this->getControllerSource();
+        $marker = '$baseSource     = $content[\'source\']';
+        $pos    = strpos($src, $marker);
+        if ($pos === false) {
+            // 구조 변경 대비 폴백 — 라벨 분기 시작 근처 주석
+            $marker = '차트 베이스(Toss/Yahoo)를 source 에 반영';
+            $pos    = strpos($src, $marker);
+        }
+        if ($pos === false) {
+            return $src;
+        }
+        return substr($src, $pos, 2000);
     }
 
     /**

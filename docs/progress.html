@@ -74,6 +74,30 @@
   </nav>
 
   <!-- ENTRIES:START -->
+  <div class="entry" data-agent="backend">
+    <h2>시세 출처 표시를 정직하게 — 토스가 막히면 "Yahoo 폴백"으로 솔직히 표기 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-25 · 담당: backend</p>
+    <div class="req"><span class="label">요청 →</span> 토스가 안 될 때 야후로 대신 받아오면서도 화면엔 "Toss"라고 떠서, 토스가 죽은 걸 알아챌 수 없었다. 실제 출처대로 솔직하게 표시해 달라.</div>
+    <div class="done"><span class="label">처리 →</span> 현재가가 실제로 어디서 왔는지(토스 라이브 / 야후 폴백 / 지난 캐시)를 꼬리표로 따라오게 해서, 출처 라벨을 <b>"Yahoo 폴백 (현재가)"·"… 캐시(지연)"</b> 등으로 정직하게 바꿨다. 마침 지금 토스가 막힌 상태라 <b>실측 확인</b>: AAPL·NVDA·TSLA가 전부 "Yahoo 폴백 (현재가)"로 올바로 표기됨(예전엔 "Toss"로 위장). 출처 라벨은 화면이 아닌 데이터/개발자도구용이라 화면 변화는 없음. 검증 테스트 6개 추가, 전체 통과(222개).</div>
+  </div>
+  <div class="entry" data-agent="backend">
+    <h2>미국 시세 새로고침이 가끔 멈칫하던 문제(첫 갱신 지연) 해소 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-25 · 담당: backend</p>
+    <div class="req"><span class="label">요청 →</span> 미국 종목의 '전일 정규장 종가'를 하루 처음 불러올 때, 그걸 가져오느라 실시간 시세 화면 전체가 잠깐 멈추는 현상을 없애 달라.</div>
+    <div class="done"><span class="label">처리 →</span> 느린 외부(야후) 호출을 <b>실시간 시세 경로 밖으로 분리</b>했다. 이제 실시간 화면은 미리 받아둔 값만 즉시 읽어 쓰고(검증: 5밀리초, 외부 호출 0), '전일 종가'는 시세 전송이 끝난 뒤 따로 데워둔다. 그 결과 야후가 5초씩 느려도 시세 화면은 더는 멈추지 않는다(실측으로 확인). 회귀 방지 테스트 6개 추가, 전체 테스트 통과(216개), 실시간 서버 재시작 후 정상.</div>
+  </div>
+  <div class="entry" data-agent="main">
+    <h2>프로젝트 가이드(CLAUDE.md)의 옛 한국투자증권 설명을 토스 기준으로 정리 <span class="badge ok">완료</span></h2>
+    <p class="meta">2026-06-25 · 담당: main</p>
+    <div class="req"><span class="label">요청 →</span> 토스로 전환이 끝났는데 가이드 문서엔 아직 옛 한국투자증권(KIS) 설명이 남아 헷갈린다. 현재 토스 구조에 맞게 고쳐 달라.</div>
+    <div class="done"><span class="label">처리 →</span> 미국 현재가 경로(토스 3곳)·지수 출처(코스피=야후 ^KS11, 나스닥=NQ=F)·휴장일 판정(토스 달력)·키 이름(TOSS_*)을 현재 코드대로 갱신. 더불어 오늘 발견한 <b>'토스는 등록된 IP에서만 동작' 함정</b>을 새 주의사항으로 추가(증상: 현재가가 전일 종가와 똑같고 거래량 0이면 IP 미등록 의심).</div>
+  </div>
+  <div class="entry" data-agent="main debug">
+    <h2>미국 주간거래/애프터 토스 시세 실측 — 네트워크(IP) 문제로 보류 <span class="badge wip">보류</span></h2>
+    <p class="meta">2026-06-25 · 담당: main</p>
+    <div class="req"><span class="label">요청 →</span> 미국 주간거래(낮)·애프터마켓(새벽) 시간대에 토스 시세가 제대로 들어오는지 실제로 확인해 달라.</div>
+    <div class="done"><span class="label">처리 →</span> 실측을 시작하니 토스가 미국·국내 모두 시세를 안 줬다. 원인은 <b>고속버스 와이파이의 IP가 토스 허용 목록에 없어 토큰 발급이 막힌 것</b>(코드·계정은 정상). 앱은 야후 폴백으로 안 죽었으나 화면엔 토스인 것처럼 표기돼 있었다. 버스 IP 등록은 유동·공유라 부적절하므로, <b>등록된 회선(집)으로 돌아왔을 때 실측 재개</b>하기로 보류. 관련 함정은 가이드·기억에 기록.</div>
+  </div>
   <div class="entry" data-agent="backend main">
     <h2>한국투자증권(KIS) API 완전 제거 — 앱이 토스+야후 2개로 단순화 <span class="badge ok">완료</span></h2>
     <p class="meta">2026-06-24 · 담당: backend main</p>

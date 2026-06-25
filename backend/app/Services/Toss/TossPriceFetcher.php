@@ -193,11 +193,14 @@ class TossPriceFetcher
                 $changeAmount  = $change['change_amount'];
                 $changePercent = $change['change_percent'];
 
-                // US 종목은 regular_close(최근 완료 정규장 종가)를 포함
-                // — Yahoo chartPreviousClose 기반으로 프리마켓/애프터에서도 정확한 값 제공
+                // US 종목은 regular_close(최근 완료 정규장 종가)를 포함.
+                // H-2 최적화: 현재가 핫패스에서 Yahoo HTTP 동기 호출을 제거한다.
+                //   regular_close 는 하루 단위로 천천히 변하는 값이므로, 핫패스에선
+                //   캐시(yahoo_regular_close_*)만 읽고(HTTP 없음), cold 면 폴백 캐시 → null.
+                //   실제 Yahoo 페치는 warmRegularCloses() 가 핫패스 밖(WS step6)에서 out-of-band 로 수행.
                 $regularClose = null;
                 if ($market === 'US') {
-                    $regularClose = $this->fetchYahooRegularClose($appSymbol);
+                    $regularClose = $this->readRegularCloseCache($appSymbol);
                 }
 
                 $result = [
@@ -205,6 +208,7 @@ class TossPriceFetcher
                     'change_amount'  => $changeAmount,
                     'change_percent' => $changePercent,
                     'regular_close'  => $regularClose,
+                    'provider'       => 'toss',  // 현재가 실제 출처 — 토스 배치 성공
                 ];
 
                 // 마켓별 하위호환 캐시 키 — StockController·프론트 무변경
@@ -293,6 +297,7 @@ class TossPriceFetcher
                         'change_amount'  => $changeAmount,
                         'change_percent' => $changePercent,
                         'regular_close'  => $regularClose,
+                        'provider'       => 'toss',  // 현재가 실제 출처 — 토스 단건 성공
                     ];
 
                     Cache::put($cacheKey, $result, self::PRICE_CACHE_TTL);
@@ -386,6 +391,7 @@ class TossPriceFetcher
             'price'          => $lastPrice,
             'change_amount'  => $changeAmount,
             'change_percent' => $changePercent,
+            'provider'       => 'toss',  // 현재가 실제 출처 — 토스 단건(국내) 성공
         ];
 
         Cache::put($cacheKey, $result, self::PRICE_CACHE_TTL);
@@ -395,10 +401,81 @@ class TossPriceFetcher
     }
 
     /**
+     * regular_close 를 캐시에서만 읽는다 (HTTP 절대 없음 — 현재가 핫패스 전용).
+     *
+     * 우선순위:
+     *   1) yahoo_regular_close_{symbol} (워머가 채우는 정본 캐시)
+     *   2) kis_last_successful_overseas_price_{symbol} 의 regular_close (24h 폴백)
+     *   3) null (cold — 다음 사이클 워머가 채울 때까지)
+     *
+     * fetchYahooRegularClose() 와 동일 키/시맨틱을 읽되, 캐시 미스 시
+     * Yahoo HTTP 를 호출하지 않는다는 점만 다르다.
+     *
+     * @param  string  $symbol  앱 심볼 (미국 티커, 예: TSLA)
+     */
+    private function readRegularCloseCache(string $symbol): ?float
+    {
+        $cached = Cache::get("yahoo_regular_close_{$symbol}");
+        if ($cached !== null && (float) $cached > 0) {
+            return (float) $cached;
+        }
+
+        // 폴백: 직전 성공 응답의 regular_close (24h)
+        $fallback = Cache::get("kis_last_successful_overseas_price_{$symbol}");
+        if (is_array($fallback)
+            && isset($fallback['regular_close'])
+            && $fallback['regular_close'] !== null
+            && (float) $fallback['regular_close'] > 0
+        ) {
+            return (float) $fallback['regular_close'];
+        }
+
+        return null;
+    }
+
+    /**
+     * 미국 종목들의 regular_close 캐시를 out-of-band 로 데운다 (Yahoo HTTP 페치).
+     *
+     * H-2 최적화: 현재가 핫패스(fetchDomestic)에서 Yahoo HTTP 를 제거한 대가로,
+     *   이 워머가 핫패스 밖(WebSocketAgentServer step6 — 전송·현재가갱신 이후)에서
+     *   yahoo_regular_close_{symbol} 캐시를 채운다.
+     *
+     * 이미 캐시가 따뜻한 심볼은 skip(불필요한 HTTP 회피). cold 심볼만 fetchYahooRegularClose()
+     * 가 동기 페치 후 캐시에 저장한다. 이 메서드는 핫패스가 아니므로 블로킹이 허용된다.
+     *
+     * 지수/US 외 심볼은 내부에서 필터된다.
+     *
+     * @param  string[]  $usTickers  앱 심볼 배열 (혼재 가능 — US 만 처리)
+     */
+    public function warmRegularCloses(array $usTickers): void
+    {
+        foreach ($usTickers as $appSymbol) {
+            $appSymbol = (string) $appSymbol;
+
+            // 지수·US 외 skip
+            if ($this->mapper->shouldSkip($appSymbol) || $this->mapper->market($appSymbol) !== 'US') {
+                continue;
+            }
+
+            // 이미 따뜻하면 HTTP 불필요
+            if (Cache::has("yahoo_regular_close_{$appSymbol}")) {
+                continue;
+            }
+
+            // cold — 핫패스 밖에서 동기 페치 (캐시에 저장됨, 반환값은 사용 안 함)
+            $this->fetchYahooRegularClose($appSymbol);
+        }
+    }
+
+    /**
      * Yahoo Finance v8 chart meta.regularMarketPrice (세션별 정규장 기준가) 조회.
      *
      * 캐시 키: "yahoo_regular_close_{symbol}" — ET 자정까지 TTL.
      * 실패 시 null 반환 (graceful).
+     *
+     * ⚠️ 블로킹 HTTP GET — 현재가 핫패스(fetchDomestic)에서 직접 호출 금지.
+     *    핫패스는 readRegularCloseCache() 로 캐시만 읽고, 이 메서드는
+     *    warmRegularCloses()(out-of-band) 또는 단건 REST 경로에서만 호출한다.
      *
      * 왜 regularMarketPrice 인가 (실측 검증: MU 1051.77, TSLA 381.61):
      *   - 프리마켓 시간대: 어제 정규장 종가 반환 (전일 기준가로 손익 계산 정확)
@@ -525,6 +602,7 @@ class TossPriceFetcher
                 'change_amount'  => $changeAmount,
                 'change_percent' => $changePercent,
                 'regular_close'  => $regularClose,
+                'provider'       => 'yahoo',  // 현재가 실제 출처 — 토스 실패 후 Yahoo 폴백
             ];
         } catch (\Throwable $e) {
             Log::warning("[TossPriceFetcher] {$symbol} Yahoo 현재가 폴백 실패: " . $e->getMessage());
