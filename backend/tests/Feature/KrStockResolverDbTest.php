@@ -17,7 +17,7 @@ use Tests\TestCase;
  * KrStockResolver — SQLite :memory: + RefreshDatabase Feature 테스트.
  *
  * phpunit.xml 에서 DB_CONNECTION=sqlite / DB_DATABASE=:memory: 가 주입되므로
- * 개발 DB(hachiware_1/MariaDB)에는 절대 접근하지 않는다.
+ * 실 DB(TiDB Cloud hachiware)에는 절대 접근하지 않는다.
  *
  * 네트워크 미접촉(hermetic):
  *   Stock 의 name·type accessor 는 app(TossStockMaster) → TossApiClient 로 캐시 미스 시

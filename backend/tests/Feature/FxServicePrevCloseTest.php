@@ -21,7 +21,7 @@ use Tests\TestCase;
 /**
  * FxService::getUsdKrw() 의 prev_close(전일 종가) 필드 검증.
  *
- * SQLite :memory: — 개발 DB(hachiware_1)에는 접근하지 않는다.
+ * SQLite :memory: — 실 DB(TiDB Cloud hachiware)에는 접근하지 않는다.
  * exchange_rates 테이블만 직접 생성(RefreshDatabase 미사용):
  *   전체 마이그레이션 중 ->change() 사용분이 doctrine/dbal 을 요구하는데,
  *   본 로컬 환경(PHP 7.4)에는 미설치라 마이그레이션 전량 실행이 불가하기 때문.

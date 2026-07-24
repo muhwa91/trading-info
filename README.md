@@ -6,13 +6,13 @@
 ![Laravel](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs&logoColor=white)
 ![Tailwind](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)
-![MariaDB](https://img.shields.io/badge/MariaDB-11-003545?logo=mariadb&logoColor=white)
+![TiDB](https://img.shields.io/badge/TiDB_Cloud-Serverless-DD3125?logo=tidb&logoColor=white)
 
 > ⚠️ **조회·자문 전용** — 주문/매매·실현손익·투자 추천은 하지 않습니다(평가손익만, 면책 표기).
 
 ## Quick Start
 
-로컬 단일 사용자 구동. 백엔드 REST · 실시간 WebSocket 데몬 · 프론트 3개 프로세스를 띄운다. (사전: PHP 8.4+, Node 22, MariaDB)
+로컬 단일 사용자 구동. 백엔드 REST · 실시간 WebSocket 데몬 · 프론트 3개 프로세스를 띄운다. (사전: PHP 8.4+, Node 22. DB는 TiDB Cloud Serverless — 로컬 DB 설치 불요, `backend/.env`에 접속정보만)
 
 ```bash
 # 준비 — 의존 설치 · .env 작성(DB_* / TOSS_*) · 마이그레이션
@@ -25,7 +25,7 @@ php artisan agent:serve          # 2) 실시간 WebSocket 데몬 (8080, 3초 사
 npm run dev                      # 3) 프론트 (Vite, 5173 · HMR)
 ```
 
-환경설정(`backend/.env`, git 제외): `TOSS_CLIENT_ID`/`TOSS_CLIENT_SECRET`(토스증권 WTS에서 발급) · `DB_*`(MariaDB). API 키·비밀값은 코드/DB에 두지 않고 전부 환경변수로 관리한다.
+환경설정(`backend/.env`, git 제외): `TOSS_CLIENT_ID`/`TOSS_CLIENT_SECRET`(토스증권 WTS에서 발급) · `DB_*`(TiDB Cloud Serverless). API 키·비밀값은 코드/DB에 두지 않고 전부 환경변수로 관리한다.
 
 > 백엔드(`WebSocketAgentServer`·`StockController` 등) 수정 후에는 **WS 데몬(8080) 재시작 필수** — long-running 프로세스라 재시작 전엔 메모리의 옛 코드로 실행된다.
 
@@ -52,7 +52,7 @@ graph LR
   WS -->|캐시 기록·등락 조립| Cache[(파일 캐시)]
   WS -->|stocks 푸시| FE
   FE -->|REST 8000| API[Laravel REST]
-  API --> DB[(MariaDB)]
+  API --> DB[(TiDB Cloud hachiware)]
   API --> Toss
   WS -.지수·폴백.-> Yahoo[(Yahoo Finance)]
 ```
@@ -66,7 +66,7 @@ graph LR
 | 차트 | lightweight-charts 5 | 금융 캔들 특화·경량 |
 | 실시간 | 순수 PHP Stream Socket WebSocket (8080) | 라이브러리 0으로 배치→캐시→푸시 데몬 자립 |
 | 시세 소스 | 토스증권 Open API(주력) + Yahoo(지수) | 배치 200종목/콜·세션 캘린더 내장. 지수는 토스 미제공 → Yahoo |
-| 저장소 | 로컬 MariaDB + 파일 캐시 | 보유·이력의 FK 무결성은 DB, 단명 시세·토큰은 캐시 |
+| 저장소 | TiDB Cloud Serverless (MySQL 호환) + 파일 캐시 | 보유·이력의 FK 무결성은 DB, 단명 시세·토큰은 캐시. 클론 즉시 접속(로컬 DB 불요) |
 | 모바일 | Capacitor | 동일 코드베이스를 앱으로 패키징 |
 
 > **데이터 소스** — 국내·미국 현재가·차트·환율·종목마스터는 **토스증권 Open API**(한국투자증권 API에서 전면 전환), 지수(나스닥100 선물 `NQ=F`·코스피 `^KS11`)와 미국 차트 폴백은 **Yahoo Finance**. 시세 소스 장애에 대비해 **토스 → Yahoo → 24h 캐시** 다단 폴백을 두고, 실패를 조용히 삼키지 않고 `source` 라벨로 데이터 출처를 표기한다.
