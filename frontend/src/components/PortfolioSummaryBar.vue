@@ -46,7 +46,7 @@
       <!-- ⑥ 손익률 배지 -->
       <span
         class="text-2xs font-medium font-mono px-1.5 py-0.5 rounded-xs transition-colors duration-260"
-        :class="[compact && 'justify-self-end min-w-[6.5ch] text-center', profitColorClass(usSummary.profitUSD, 'us'), profitBadgeBg(usSummary.profitUSD)]"
+        :class="[compact && 'justify-self-end min-w-[6.5ch] text-center', profitColorClass(usSummary.profitUSD, 'us'), flashTint(usFlash)]"
       >{{ formatProfitRate(usSummary.profitRate) }}</span>
     </div>
 
@@ -78,7 +78,7 @@
       <!-- ⑥ 손익률 배지 -->
       <span
         class="text-2xs font-medium font-mono px-1.5 py-0.5 rounded-xs transition-colors duration-260"
-        :class="[compact && 'justify-self-end min-w-[6.5ch] text-center', profitColorClass(krSummary.profitKRW, 'kr'), profitBadgeBg(krSummary.profitKRW)]"
+        :class="[compact && 'justify-self-end min-w-[6.5ch] text-center', profitColorClass(krSummary.profitKRW, 'kr'), flashTint(krFlash)]"
       >{{ formatProfitRate(krSummary.profitRate) }}</span>
     </div>
 
@@ -116,15 +116,6 @@ const props = defineProps({
     default: false,
   },
 });
-
-// 손익률 배지 배경(약틴트) — 이익=up-weak / 손실=down-weak / 값없음(—)=중립(무배경).
-// profitColorClass 는 텍스트색만 주므로 배지 채움은 여기서. null/undefined 는 신호색 아님.
-function profitBadgeBg(value) {
-  if (value === null || value === undefined) return '';
-  const n = Number(value);
-  if (isNaN(n)) return '';
-  return n >= 0 ? 'bg-up-weak' : 'bg-down-weak';
-}
 
 // ── computed ──────────────────────────────────────────────────
 
