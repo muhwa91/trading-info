@@ -22,7 +22,7 @@ use Tests\TestCase;
  *   ~89,000분 스캔조차 "코드의 경계"는 정확히 찾아냈지만 "코드가 틀렸다"는 원리적으로 말할 수 없었다.
  *   그래서 여기서는 getUsSession 을 기준으로 아무것도 계산하지 않는다. **픽스처가 말하고 코드가 답한다.**
  *
- * 픽스처 스키마 출처 = 실측(docs/기능/toss-api-migration/03_구현_검증.md §토스 US 캘린더 스키마).
+ * 픽스처 스키마 출처 = 실측(docs/기능/토스_API_이관/03_구현_검증.md §토스 US 캘린더 스키마).
  * 4창이 전부 KST 절대시각이라 ET 환산·DST 수학을 여기 옮겨 적지 않는다(옮겨 적는 순간 복제본이 된다).
  */
 class MarketSessionServiceTest extends TestCase

@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Log;
  * exchange_rates 테이블에 (from_currency, to_currency) 고유 키로 최신 1건 upsert.
  * 신선도: FX_STALE_SECONDS(기본 300초=5분) 이내 데이터는 외부 호출 생략.
  *
- * 설계 참조: docs/기능/toss-api-migration/01_계획.md §2.2 (FxService 행), Phase 2.
+ * 설계 참조: docs/기능/토스_API_이관/01_계획.md §2.2 (FxService 행), Phase 2.
  */
 class FxService
 {

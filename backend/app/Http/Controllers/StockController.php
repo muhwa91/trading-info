@@ -1442,36 +1442,17 @@ class StockController extends Controller
         return $map[$session] ?? 'CLOSED';  // 장마감
     }
 
+    /**
+     * US 시장이 지금 '개장 중'(라이브 세션)인가.
+     *
+     * MarketSessionService::getUsSession 에 위임한다(세션 모형 단일 소스화, 2026-07-21).
+     * 이전에는 자체 하드코딩 경계(19:50 vs 20:00, 04:00 등)를 두어 getUsSession 과
+     * 19:50~20:00 10분 창을 다르게 판정하는 이중소스가 있었다(수치오류 아님·헤더 라벨↔차트 누적 시각 불일치).
+     * 위임으로 4곳 중복 제거(RefreshYahooCacheMockGuardTest:114 "근본 해법" 주석 참조).
+     */
     private function isUsMarketOpen($timestamp)
     {
-        $dt = new \DateTime("@{$timestamp}");
-        $dt->setTimezone(new \DateTimeZone('America/New_York'));
-
-        $dayOfWeek = (int) $dt->format('N');
-        $hour = (int) $dt->format('H');
-        $minute = (int) $dt->format('i');
-        $timeVal = $hour * 100 + $minute;
-
-        // 주말 휴장 경계(NY): 금 20:00 ~ 일 20:00
-        if ($dayOfWeek === 6) { // Saturday
-            return false;
-        }
-        if ($dayOfWeek === 7 && $timeVal < 2000) { // Sunday before 8 PM EST
-            return false;
-        }
-        if ($dayOfWeek === 5 && $timeVal >= 2000) { // Friday after 8 PM EST
-            return false;
-        }
-
-        // 주간거래(20:00~04:00 ET)는 다음 거래일로 이어지는 세션 — 주말만 아니면 개장.
-        // 경계는 getUsSession() 과 동일하게 400(04:00)으로 맞춘다 — 03:30 은 실측상 허구였다
-        // (03:30~04:00 91/91분 체결, 04:01 거래량 169→44,397 = 진짜 프리마켓 개시. 2026-07-17 교정).
-        if ($timeVal >= 2000 || $timeVal < 400) {
-            return true;
-        }
-
-        // 데이 세션(04:00~20:00)은 'NY 오늘'이 거래일일 때만 — 공휴일이면 미개장
-        return $this->isUsMarketTradingToday();
+        return $this->sessionService->getUsSession((int) $timestamp) !== '장마감';
     }
 
     private function getKrMarketSessionInfo($timestamp)

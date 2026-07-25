@@ -1,4 +1,4 @@
-# trading_info
+# trading-info
 
 미국·국내 주식을 **3초 주기로 실시간 모니터링**하고, 보유 종목을 **원화로 통합 평가**(주가손익·환율손익 분리)하는 개인용 포트폴리오 트래커. PC 웹 + 모바일 앱(Capacitor).
 
@@ -7,6 +7,12 @@
 ![Vue](https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs&logoColor=white)
 ![Tailwind](https://img.shields.io/badge/Tailwind-v4-06B6D4?logo=tailwindcss&logoColor=white)
 ![TiDB](https://img.shields.io/badge/TiDB_Cloud-Serverless-DD3125?logo=tidb&logoColor=white)
+
+**🔗 라이브 데모 — [muhwa-trading-info.vercel.app](https://muhwa-trading-info.vercel.app)**
+
+> 데모는 **더미 데이터**로 동작합니다. 서버·DB 없이 프론트엔드만 정적 배포하고,
+> `fetch`·`axios`·`WebSocket` 을 가로채 지어낸 시세·보유 종목을 흘립니다(`src/demo/`).
+> 실계좌 데이터는 어디에도 포함되지 않습니다. 실행: `VITE_DEMO=1 npm run build`
 
 > ⚠️ **조회·자문 전용** — 주문/매매·실현손익·투자 추천은 하지 않습니다(평가손익만, 면책 표기).
 

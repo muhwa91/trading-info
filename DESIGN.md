@@ -1,6 +1,6 @@
 # DESIGN.md — Stockpit 비주얼 리디자인 설계서
 
-> 대상: `Hachiware/_Project/trading_info/frontend` (Vue 3.5 + Tailwind v4 + daisyUI v5 + lightweight-charts 5.2)
+> 대상: `Hachiware/_Project/trading-info/frontend` (Vue 3.5 + Tailwind v4 + daisyUI v5 + lightweight-charts 5.2)
 > 범위: 스타일 재설계(정보구조·레이아웃 유지) + 간격/정렬/색 불일치 교정. 실사용자 1인, HTS급 정보밀도.
 > 원칙: 모든 값은 토큰에서 파생. 컴포넌트에 raw HEX 금지. KR 시장 관례(상승=빨강·하락=파랑) 불변.
 > 작성: ui-ux-designer, 2026-07-10

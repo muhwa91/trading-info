@@ -1,20 +1,19 @@
-﻿# trading_info 세팅 스크립트 (Laravel 13 + Vue 3 + MariaDB)
+﻿# trading-info 세팅 스크립트 (Laravel 13 + Vue 3 + TiDB Cloud Serverless)
 # ─────────────────────────────────────────────────────────────
 # 사용: chiikawa_dev 클론 후 이 폴더에서 PowerShell 로 실행.
-#   powershell -ExecutionPolicy Bypass -File .\setup_trading_info.ps1
+#   powershell -ExecutionPolicy Bypass -File .\setup_trading-info.ps1
 #
 # 사전 준비(SETUP.md 참조 — 런타임은 이 스크립트가 설치하지 않음):
-#   - git · composer · node/npm · MariaDB 가 설치돼 PATH 에 있어야 함
+#   - git · composer · node/npm 이 설치돼 PATH 에 있어야 함 (DB 는 TiDB Cloud — 로컬 DB 설치 불요)
 #   - PHP 8.4+ 는 별도 폴더에 병행 설치(예: C:\php84) 후 php_path.txt 에 경로 기재.
 #       · XAMPP 의 php 7.4 로는 artisan 이 아예 뜨지 않으므로 PATH 의 php 에 의존하지 않는다.
 #       · php.ini 에서 extension=curl·openssl·mbstring·pdo_mysql·fileinfo·zip 활성화 필요.
 #       · ★ cacert.pem 필수 — https://curl.se/ca/cacert.pem 를 C:\php84\cacert.pem 로 받고 php.ini 에
 #         curl.cainfo = "C:\php84\cacert.pem"  /  openssl.cafile = "C:\php84\cacert.pem" 를 설정할 것.
 #         (미설정 시 모든 HTTPS 가 "조용히" 실패 → 시세·캔들이 틀린 값으로 채워짐. 아래 0-1)에서 검사)
-#   - MariaDB 에 DB·유저 생성:  (root 로 1회)
-#       CREATE DATABASE hachiware_1 CHARACTER SET utf8mb4;
-#       CREATE USER 'chiikawa'@'127.0.0.1' IDENTIFIED BY '<원하는비번>';
-#       GRANT ALL ON hachiware_1.* TO 'chiikawa'@'127.0.0.1';  FLUSH PRIVILEGES;
+#   - DB 는 TiDB Cloud Serverless(관리형, MySQL 8 호환·TLS 필수 — ADR-006). 로컬 DB 생성 불요.
+#       · 접속정보(호스트·유저·비번)는 backend\.env 의 DB_* 에 넣는다(아래 1) 단계 안내).
+#       · CA 인증서 backend\tidb-ca.pem 은 레포에 커밋돼 있어 클론만으로 준비됨(TLS 검증용).
 # ─────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
@@ -57,8 +56,8 @@ if (-not (Test-Path "backend\.env")) {
     Write-Host "[!] backend\.env 를 생성했습니다. 아래 3개 값을 채운 뒤 다시 실행하세요:" -ForegroundColor Yellow
     Write-Host "      TOSS_CLIENT_ID      = (토스증권 WTS 설정에서 발급)"
     Write-Host "      TOSS_CLIENT_SECRET  = (〃)"
-    Write-Host "      DB_PASSWORD         = (MariaDB chiikawa 유저 비번)"
-    Write-Host "    (DB명 hachiware_1 · 유저 chiikawa · TOSS_API_URL 은 이미 채워져 있음)"
+    Write-Host "      DB_HOST/DB_USERNAME/DB_PASSWORD = (TiDB Cloud 접속정보 — 콘솔 Connect 에서 확인)"
+    Write-Host "    (DB명 hachiware · DB_CONNECTION=mysql · TLS 필수(tidb-ca.pem) · TOSS_API_URL 은 이미 채워져 있음)"
     exit 1
 }
 
@@ -82,6 +81,6 @@ npm install
 Set-Location ".."
 
 Write-Host ""
-Write-Host "[완료] trading_info 세팅 끝." -ForegroundColor Green
-Write-Host "  실행: run_trading_info.vbs  (또는 start_trading_info.bat)"
+Write-Host "[완료] trading-info 세팅 끝." -ForegroundColor Green
+Write-Host "  실행: run_trading-info.vbs  (또는 start_trading-info.ps1)"
 Write-Host "  ※ 보유종목·관심종목은 개인 데이터라 시드되지 않습니다 — 화면에서 새로 입력하세요."
