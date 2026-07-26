@@ -347,15 +347,6 @@ const props = defineProps({
   },
 
   /**
-   * 하단 차트 그리드의 종목 순서(심볼 배열).
-   * 차트를 드래그로 재배치하면 사이드바 목록도 이 순서를 따라 정렬된다.
-   */
-  gridOrder: {
-    type: Array,
-    default: () => [],
-  },
-
-  /**
    * 사이드바 위치 ('left' | 'right').
    * 상위(App.vue)에서 내려줌 — 버튼 title 표시에 사용.
    */
@@ -482,22 +473,14 @@ const enrichedItems = computed(() => {
   });
 });
 
-// 탭(한국/미국/전체)에 따라 표시 목록을 분리하고, 하단 차트 그리드 순서에 맞춰 정렬한다.
-// (차트를 드래그로 재배치하면 gridOrder 가 바뀌어 사이드바 목록 순서도 연동된다.)
+// 탭(한국/미국/전체)에 따라 표시 목록을 분리한다.
+// ponytail: 그리드 순서(gridOrder) 미러링 정렬 제거 — 클릭이 gridTickers 를 바꿀 때
+// 클릭한 행이 커서 밑에서 점프해 오클릭을 유발했다(2026-07-26 제거).
 const filteredItems = computed(() => {
   let items = enrichedItems.value;
   if (searchMode.value === 'kr') items = items.filter(it => it.market === 'KR');
   else if (searchMode.value === 'us') items = items.filter(it => it.market === 'US');
-
-  const order = (props.gridOrder || []).filter(s => typeof s === 'string' && s !== '');
-  if (order.length === 0) return items;
-
-  // 그리드에 있는 종목은 그리드 순서대로 앞에, 나머지는 기존 순서대로 뒤에(안정 정렬).
-  const idxOf = (sym) => {
-    const i = order.indexOf(sym);
-    return i === -1 ? Infinity : i;
-  };
-  return [...items].sort((a, b) => idxOf(a.symbol) - idxOf(b.symbol));
+  return items;
 });
 
 /**

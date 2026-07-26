@@ -102,9 +102,8 @@
           <UnifiedWatchlist
             :items="dashboardData ? dashboardData.watchlist : []"
             :prices-map="watchlistDetailsMap"
-            :selected-ticker="gridTickers[activeGridIndex]"
+            :selected-ticker="lastSelectedTicker"
             :market-sync="gridMarket"
-            :grid-order="gridTickers"
             :sidebar-position="sidebarPosition"
             @select="handleUnifiedSelect"
             @changed="onWatchlistChanged"
@@ -347,7 +346,7 @@
             <div
               v-if="ticker"
               :draggable="gridDragHandleIdx === idx"
-              @click="activeGridIndex = idx"
+              @click="activeGridIndex = idx; lastSelectedTicker = ticker"
               @dragstart="onGridDragStart(idx, $event)"
               @dragend="onGridDragEnd"
               @dragover.prevent="onGridDragOver(idx)"
@@ -545,6 +544,7 @@
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, provide } from 'vue';
 import { isNqTradingByEtClock } from './utils/nqSession.js';
 import { gridColsClass as computeGridColsClass } from './utils/gridCols.js';
+import { placeTicker } from './utils/gridPlacement.js';
 import { SESSION_BADGE_BASE, sessionBadgeTone } from './utils/sessionBadge.js';
 import { useAutoAnimate } from '@formkit/auto-animate/vue';
 import StockChart from './components/StockChart.vue';
@@ -567,6 +567,8 @@ const indexTickers = ref(['NQ=F', 'KOSPI200', 'KOSPI_NIGHT']);
 const indexStockData = ref({ 'NQ=F': null, 'KOSPI200': null, 'KOSPI_NIGHT': null });
 const indexTimeframes = ref({ 'NQ=F': '3m', 'KOSPI200': '3m', 'KOSPI_NIGHT': '3m' });
 const activeGridIndex = ref(0);
+const lastSelectedTicker = ref(''); // 사이드바 하이라이트 전용 — 활성 슬롯(activeGridIndex)과 분리
+
 const gridDraggingIdx = ref(null); // 드래그 중인 그리드 슬롯
 const gridDragOverIdx = ref(null); // 드롭 대상으로 올라온 그리드 슬롯
 const gridDragHandleIdx = ref(null); // 드래그 핸들(차트 헤더)을 잡은 슬롯 — 이 슬롯만 draggable 활성
@@ -826,11 +828,14 @@ localStorage.removeItem('watchlist');
 // 그리드를 DB 관심종목(현재 선택된 시장)과 일치시킨다: ① 해당 시장 관심종목에 없는
 // 그리드 종목 제거, ② 빈 칸을 아직 표시되지 않은 관심종목으로 앞에서부터 채움(최대 4칸).
 // 기존에 표시 중인(여전히 유효한) 종목의 위치·순서는 보존한다.
-function reconcileGridWithWatchlist() {
+// fill=false 면 ①(제거)만 하고 빈 칸 자동 채움은 건너뛴다 — 10초 폴링이 사용자가 비운
+// 슬롯을 매번 다시 채워 그리드/포커스가 무입력으로 움직이던 문제 때문(2026-07-26).
+function reconcileGridWithWatchlist(fill = true) {
   const wl = gridMarket.value === 'US' ? watchlistByMarket.value.US : watchlistByMarket.value.KR;
   gridTickers.value.forEach((t, i) => {
     if (t && !wl.includes(t)) gridTickers.value.splice(i, 1, '');
   });
+  if (!fill) return;
   const shown = new Set(gridTickers.value.filter(Boolean));
   const remaining = wl.filter(s => !shown.has(s));
   for (let i = 0; i < GRID_SIZE && remaining.length > 0; i++) {
@@ -918,8 +923,9 @@ async function fetchDashboard() {
     dashboardData.value = data;
     const nextSymbols = dbWatchlistSymbols.value.join(',');
 
-    // 그리드를 항상 DB 관심종목과 일치시킨다(관심종목에서 지운 종목은 그리드에서도 사라짐)
-    reconcileGridWithWatchlist();
+    // 그리드를 항상 DB 관심종목과 일치시킨다(관심종목에서 지운 종목은 그리드에서도 사라짐).
+    // 빈 칸 자동 채움은 관심종목 구성이 실제로 바뀐 폴링에서만(무입력 변화 방지).
+    reconcileGridWithWatchlist(prevSymbols !== nextSymbols);
 
     // 관심종목 또는 그리드 구성이 바뀌면 WS 재구독
     if (prevSymbols !== nextSymbols || prevGrid !== gridTickers.value.join(',')) {
@@ -951,29 +957,22 @@ function stopDashboardPoll() {
 
 // @select(ticker): 관심종목 클릭 → 활성 그리드 슬롯에 배치 (시계방향 순환)
 function handleUnifiedSelect(ticker) {
-  // 선택 종목이 현재 그리드 시장과 다르면, 그리드를 그 시장으로 스왑한 뒤 첫 칸에 배치
+  // 선택 종목이 현재 그리드 시장과 다르면 시장을 스왑한다 — 탭 클릭과 **같은 경로**(setGridMarket)로.
+  // 여기서 그리드를 직접 비우면 안 된다: 비우기만 하고 채우지 않으면 빈 슬롯이 영구히 남는다
+  // (폴링 채움이 관심종목 심볼 변화에만 걸려 있어 자가치유되지 않고, "국내↔미국" 왕복 외엔
+  //  회복 수단도 없다 → 그 상태에서 다음 클릭이 빈 슬롯을 놔두고 기존 차트를 덮는다. 2026-07-26 실측)
   const wl = (dashboardData.value && Array.isArray(dashboardData.value.watchlist)) ? dashboardData.value.watchlist : [];
   const found = wl.find(w => w.symbol === ticker);
-  if (found && found.market && found.market !== gridMarket.value) {
-    gridMarket.value = found.market;
-    gridTickers.value = Array(GRID_SIZE).fill('');
-    // 시장 전환 시에도 캐시로 즉시 채움
-    gridStockData.value = gridTickers.value.map((t) => (t && stockDataCache.value[t]) ? stockDataCache.value[t] : null);
-    activeGridIndex.value = 0;
-  }
-  const targetIndex = activeGridIndex.value;
+  if (found && found.market && found.market !== gridMarket.value) setGridMarket(found.market);
+  const { tickers, activeIndex, placedIndex } = placeTicker(gridTickers.value, activeGridIndex.value, ticker);
+  lastSelectedTicker.value = ticker;
+  activeGridIndex.value = activeIndex;
+  if (placedIndex === null) return;   // 이미 그리드에 있음 — 중복 추가 대신 그 슬롯만 활성화
   // 선택 종목은 캐시가 있으면 즉시 표시(없으면 로딩)
-  gridStockData.value.splice(targetIndex, 1, stockDataCache.value[ticker] || null);
-  gridTickers.value.splice(targetIndex, 1, ticker);
-  gridTimeframes.value.splice(targetIndex, 1, '3m');
+  gridStockData.value.splice(placedIndex, 1, stockDataCache.value[ticker] || null);
+  gridTimeframes.value.splice(placedIndex, 1, '3m');
+  gridTickers.value = tickers;
   subscribeToWebSocket();
-  // 다음 활성 슬롯: 빈 슬롯이 있으면 그 슬롯 우선(직관적), 없으면 시계방향 순환
-  const emptyIdx = gridTickers.value.findIndex(t => t === '');
-  if (emptyIdx !== -1) {
-    activeGridIndex.value = emptyIdx;
-  } else {
-    activeGridIndex.value = (targetIndex + 1) % GRID_SIZE;
-  }
 }
 
 // @changed: 관심종목 추가/삭제/이관 후 → dashboard 재조회 + WS 재구독
