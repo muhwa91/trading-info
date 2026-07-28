@@ -5,8 +5,10 @@
 #
 # 사전 준비(SETUP.md 참조 — 런타임은 이 스크립트가 설치하지 않음):
 #   - git · composer · node/npm 이 설치돼 PATH 에 있어야 함 (DB 는 TiDB Cloud — 로컬 DB 설치 불요)
-#   - PHP 8.4+ 는 별도 폴더에 병행 설치(예: C:\php84) 후 php_path.txt 에 경로 기재.
-#       · XAMPP 의 php 7.4 로는 artisan 이 아예 뜨지 않으므로 PATH 의 php 에 의존하지 않는다.
+#   - PHP 8.4.1+ 필요(Laravel 13 + composer.lock 의 symfony 8.1). PATH 의 php 를 그대로 쓴다.
+#       · 2026-07-28 시스템 PATH 의 C:\xampp\php(7.4) 항목을 C:\php84 로 교체 — 이제 PATH 의 php 가 8.4.x.
+#       · 다른 머신에서 PATH 에 구버전 php 가 먼저 잡히면 아래 0) 이 C:\php84\php.exe 로 폴백하고,
+#         그마저 없거나 8.4.1 미만이면 명확한 안내와 함께 중단한다(구버전으로는 artisan 이 아예 뜨지 않음).
 #       · php.ini 에서 extension=curl·openssl·mbstring·pdo_mysql·fileinfo·zip 활성화 필요.
 #       · ★ cacert.pem 필수 — https://curl.se/ca/cacert.pem 를 C:\php84\cacert.pem 로 받고 php.ini 에
 #         curl.cainfo = "C:\php84\cacert.pem"  /  openssl.cafile = "C:\php84\cacert.pem" 를 설정할 것.
@@ -19,20 +21,69 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-# 0) PHP 실행 파일 — 경로는 php_path.txt 한 곳에서만 정의(전 스크립트 공용).
+# 0) PHP 실행 파일 — 이 스크립트에서 PHP 경로를 정하는 유일한 곳(아래는 $php 만 쓴다).
+#    ① PATH 의 php 가 8.4.1 이상이면 그것 → ② 아니면 C:\php84\php.exe → ③ 둘 다 아니면 중단.
+$phpMin = [version]"8.4.1"
+
+function Get-PhpVersion([string]$exe) {
+    # 로컬 스코프에서만 완화 — native stderr 가 예외로 승격돼 정상 php 를 탈락시키지 않게.
+    $ErrorActionPreference = "SilentlyContinue"
+    $out = $null
+    try { $out = & $exe -r "echo PHP_VERSION;" 2>$null } catch { $out = $null }
+    if ($out -is [array]) { $out = $out -join "" }
+    if ("$out" -match "(\d+\.\d+\.\d+)") { return [version]$Matches[1] }
+    return $null
+}
+
+$phpCandidates = @()
+$phpOnPath = Get-Command php -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($phpOnPath) { $phpCandidates += $phpOnPath.Source }
+$phpCandidates += "C:\php84\php.exe"
+$phpCandidates = @($phpCandidates | Select-Object -Unique)
+
 $php = ""
-if (Test-Path "php_path.txt") { $php = (Get-Content "php_path.txt" -TotalCount 1).Trim() }
-if (-not $php -or -not (Test-Path $php)) {
+$phpDiag = @()
+foreach ($cand in $phpCandidates) {
+    if (-not (Test-Path $cand)) {
+        $phpDiag += "      - $cand : 없음"
+        continue
+    }
+    $ver = Get-PhpVersion $cand
+    if ($null -eq $ver) {
+        $phpDiag += "      - $cand : 버전 확인 실패"
+    } elseif ($ver -lt $phpMin) {
+        $phpDiag += "      - $cand : $ver (8.4.1 미만)"
+    } else {
+        $php = $cand
+        break
+    }
+}
+if (-not $php) {
     Write-Host ""
-    Write-Host "[!] PHP 실행 파일을 찾을 수 없습니다: $php" -ForegroundColor Red
-    Write-Host "    php_path.txt 에 PHP 8.4+ php.exe 의 전체 경로를 적어주세요 (예: C:\php84\php.exe)."
-    Write-Host "    ※ PATH 의 php(XAMPP 7.4)로는 artisan 이 실행되지 않아 폴백하지 않습니다."
+    Write-Host "[!] PHP 8.4.1 이상을 찾지 못했습니다. (Laravel 13 + symfony 8.1 요구 버전)" -ForegroundColor Red
+    Write-Host "    검사한 후보:"
+    foreach ($line in $phpDiag) { Write-Host $line }
+    Write-Host "    조치: PHP 8.4+ 를 설치해 PATH 에 넣거나 C:\php84\php.exe 로 두세요."
     exit 1
 }
-# composer.bat 은 PATH 의 php 를 부른다 → 7.4 가 먼저 잡히면 platform 오류.
+# composer.bat 은 PATH 의 php 를 부른다 → 구버전(8.4.1 미만)이 먼저 잡히면 platform 오류.
 # 이 세션 PATH 앞에 위 php 의 폴더를 끼워 composer 도 같은 PHP 를 쓰게 한다.
 $env:Path = (Split-Path $php) + ";" + $env:Path
 Write-Host "[PHP] $php  ($(& $php -r 'echo PHP_VERSION;'))" -ForegroundColor DarkGray
+
+# 0-0) php_path.txt 기록 — 바탕화면 아이콘(run_trading-info*.vbs)은 이 파일로 php 를 찾는다.
+#      머신마다 다른 값이라 gitignore 대상. vbs 의 OpenTextFile(...).ReadLine 은 ANSI 로 읽으므로
+#      BOM 없이 ASCII 로 쓴다(경로는 ASCII 뿐). 내용이 같으면 다시 쓰지 않는다.
+$phpPathFile = Join-Path $PSScriptRoot "php_path.txt"
+$phpPathOld = ""
+if (Test-Path $phpPathFile) {
+    $firstLine = Get-Content $phpPathFile -TotalCount 1
+    if ($firstLine) { $phpPathOld = $firstLine.Trim() }
+}
+if ($phpPathOld -ne $php) {
+    [IO.File]::WriteAllText($phpPathFile, $php + "`r`n", [Text.Encoding]::ASCII)
+    Write-Host "[PHP] php_path.txt 갱신 (바탕화면 아이콘용)" -ForegroundColor DarkGray
+}
 
 # 0-1) CA 인증서 확인 — 미설정이면 모든 HTTPS 가 예외 없이 "조용히" 실패한다.
 #      (증상: 시세 API 가 값을 못 받아 기준가·캔들이 틀린 값으로 채워짐. 테스트는 전부 hermetic 이라 못 잡음.)

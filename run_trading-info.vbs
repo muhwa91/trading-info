@@ -15,7 +15,7 @@ If objFSO.FileExists(strBase & "\php_path.txt") Then
 End If
 If strPhp = "" Or Not objFSO.FileExists(strPhp) Then
     MsgBox "PHP 실행 파일을 찾을 수 없습니다: " & strPhp & vbCrLf & vbCrLf & _
-           "php_path.txt 에 PHP 8.4+ php.exe 의 전체 경로를 적어주세요 (예: C:\php84\php.exe).", 16, "trading-info"
+           "세팅 스크립트를 먼저 실행하세요: setup_trading-info.ps1" & vbCrLf & "(그 스크립트가 이 머신의 PHP 8.4+ 경로를 php_path.txt 에 자동 기록합니다.)", 16, "trading-info"
     WScript.Quit 1
 End If
 
