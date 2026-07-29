@@ -585,20 +585,41 @@ class StockController extends Controller
 
         $price = $meta['regularMarketPrice'] ?? 0.0;
         // 전일종가: chartPreviousClose 는 range '시작 직전' 값이라 range=2d 면 '이틀 전'이 됨(한 칸 밀림 버그).
-        // 따라서 close 배열의 직전 봉(closes[n-2])을 전일종가로 쓴다. 부족할 때만 meta 폴백.
+        // 그래서 close 배열에서 고르되, 기준은 '위치'가 아니라 '봉의 날짜'다.
+        //   - NQ=F: 마지막 봉이 오늘(진행 중) → 그 직전 봉이 기준가
+        //   - ^KS11: 오늘 봉이 아직 null → 마지막 비-null 봉(=전 거래일)이 기준가
+        // null 을 걸러낸 뒤 n-2 를 쓰면 후자에서 한 칸 더 밀려 '전전 거래일'이 잡힌다(2026-07-29 -16% 버그).
         $prevClose = 0.0;
+        $closesRaw = $result['indicators']['quote'][0]['close'] ?? [];
+        $timestamps = $result['timestamp'] ?? [];
+        // 타임스탬프-종가 짝이 안 맞으면 날짜 판정을 믿을 수 없으므로 위치 기반으로 폴백한다.
+        $pairable = is_array($closesRaw) && is_array($timestamps) && count($timestamps) === count($closesRaw);
 
-        if (isset($result['indicators']['quote'][0]['close'])) {
-            $closes = array_values(array_filter($result['indicators']['quote'][0]['close'], function ($v) {
-                return $v !== null;
-            }));
-            $n = count($closes);
-            if ($n >= 1 && $price == 0.0) {
-                $price = end($closes);
+        // 거래소 현지 기준 '오늘' — 서버 시계 대신 응답의 regularMarketTime + gmtoffset 을 쓴다
+        // (거래소 시간대 판정을 응답 자체가 들고 있으므로 별도 세션 헬퍼가 필요 없다).
+        $gmtOffset = (int) ($meta['gmtoffset'] ?? 0);
+        $today = gmdate('Y-m-d', (int) ($meta['regularMarketTime'] ?? time()) + $gmtOffset);
+
+        $closes = [];      // null 제외 전체 종가 — 현재가 폴백용
+        $completed = [];   // 당일 봉을 뺀 '완료된' 종가 — 기준가용
+        foreach ($closesRaw as $i => $v) {
+            if ($v === null) {
+                continue;
             }
-            if ($n >= 2) {
-                $prevClose = $closes[$n - 2];
+            $closes[] = $v;
+            if (! $pairable || gmdate('Y-m-d', (int) $timestamps[$i] + $gmtOffset) < $today) {
+                $completed[] = $v;
             }
+        }
+
+        if (! $pairable) {
+            array_pop($completed);  // ponytail: 위치 기반 폴백 — 마지막 봉을 당일 봉으로 간주
+        }
+        if ($closes && $price == 0.0) {
+            $price = end($closes);
+        }
+        if ($completed) {
+            $prevClose = end($completed);
         }
 
         if ($prevClose == 0.0) {
