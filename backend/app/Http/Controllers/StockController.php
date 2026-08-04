@@ -626,6 +626,15 @@ class StockController extends Controller
             $prevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? $price;
         }
 
+        // 직전 거래일 일봉이 통째로 결손이면 위 $completed 는 그 전날을 집는다(날짜 기준이어도 못 피한다).
+        // 그 세션 종가는 분봉에 남아 있으므로 결손일 때만 보강한다.
+        $backfilled = $this->backfillPrevCloseFromIntraday(
+            $timestamps, $closesRaw, $meta['symbol'] ?? '', $today, $gmtOffset
+        );
+        if ($backfilled !== null) {
+            $prevClose = $backfilled;
+        }
+
         $change = $price - $prevClose;
         $changePercent = ($prevClose > 0) ? ($change / $prevClose) * 100 : 0.0;
 
@@ -635,6 +644,91 @@ class StockController extends Controller
             'change' => round($change, 2),
             'change_percent' => round($changePercent, 2),
         ];
+    }
+
+    /**
+     * 일봉 결손 보강 — '오늘 이전 마지막 세션'의 일봉 close 가 null 이면 그 세션 종가를 분봉에서 가져온다.
+     *
+     * 배경(2026-08-04 장중 실측): ^KS11 일봉이 8/3 만 끝내 null 인 채 8/4 봉이 채워졌다.
+     * 일봉 배열에 8/3 이 없으니 기준가가 7/31 로 하루 밀려 등락률이 통째로 틀린다(-3.70%, 실제 +1.37%).
+     * 8/3 종가 6257.45 는 일봉 어디에도 없지만 분봉에는 남아 있다(3m 경로만 정확했던 이유).
+     *
+     * 감지는 이미 손에 있는 배열로 한다 — 오늘 이전 '마지막 세션 날짜'와 '마지막 값 있는 날짜'가
+     * 다르면 그 사이가 결손이다. 정상 피드는 둘이 같아 여기서 즉시 빠지므로 외부 호출이 늘지 않는다.
+     *
+     * @param  array<int, int|string>  $timestamps  일봉 타임스탬프(널 봉도 자리를 갖는다)
+     * @param  array<int, float|null>  $closesRaw  널을 걸러내지 않은 원본 close 배열
+     * @return float|null 보강 성공 시 종가, 결손 없음·보강 실패 시 null(호출부는 종전 기준가 유지)
+     */
+    private function backfillPrevCloseFromIntraday(array $timestamps, array $closesRaw, $symbol, $today, $gmtOffset)
+    {
+        // 타임스탬프-종가 짝이 안 맞으면 날짜 판정을 믿을 수 없다.
+        if ($symbol === '' || count($timestamps) !== count($closesRaw)) {
+            return null;
+        }
+
+        $lastSessionDate = null;    // 오늘 이전 마지막 세션(널이어도 날짜는 남아 있다)
+        $lastCompletedDate = null;  // 그중 값이 있는 마지막 날 = 지금 기준가의 출처
+        foreach ($timestamps as $i => $t) {
+            $date = gmdate('Y-m-d', (int) $t + $gmtOffset);
+            if ($date >= $today) {
+                continue;
+            }
+            $lastSessionDate = $date;
+            if (($closesRaw[$i] ?? null) !== null) {
+                $lastCompletedDate = $date;
+            }
+        }
+
+        // ponytail: 널 봉이 '자리'를 갖는다는 전제(^KS11 실측). Yahoo 가 결손일의 타임스탬프까지
+        // 통째로 빼면 결손을 감지할 수 없어 종전 동작으로 남는다 — 그때는 거래소 캘린더가 필요하다.
+        if ($lastSessionDate === null || $lastSessionDate === $lastCompletedDate) {
+            return null;  // 정상 피드 — 추가 호출 없음
+        }
+
+        // 이미 마감된 세션의 종가라 값이 변하지 않는다. 키에 날짜가 들어가 하루가 바뀌면 자연히 갈린다.
+        // 일봉 캐시(90초)와는 키 계열이 달라 충돌하지 않는다.
+        $close = Cache::remember(
+            "yahoo_session_close_{$symbol}_{$lastSessionDate}",
+            600,
+            function () use ($symbol, $lastSessionDate, $gmtOffset) {
+                try {
+                    // 5m/5d — 1m 과 세션 종가가 동일하고(실측 4개 세션 일치) 봉 수는 1/5(1588→320).
+                    // 5d 라 주말·연휴가 낀 결손도 닿는다. 부수 보강이므로 타임아웃을 짧게 둔다.
+                    //
+                    // includePrePost=true 는 필수다 — KRX 종가는 15:30 종가단일가(동시호가)로 결정되는데
+                    // Yahoo 는 정규장을 09:00~15:00 으로 신고해 이 봉을 정규장 밖으로 뺀다.
+                    // 빼면 14:55 봉(^KS11 6251.59)이 잡혀 실제 종가 6257.45 와 어긋난다.
+                    // (prePost 켠 값은 삼성전자 239500 처럼 일봉 종가와 정확히 일치함을 실측 확인)
+                    // ponytail: 미국은 반대로 시간외 마지막 체결이 잡혀 공식 종가와 0.5%가량 어긋난다.
+                    //   지금 결손이 나는 건 KR 지수뿐이라 그대로 둔다 — 미국까지 결손이 번지면
+                    //   거래소별 정규장 마감 시각으로 봉을 잘라야 한다(Yahoo 신고값은 KRX 에서 틀리므로 못 쓴다).
+                    $client = new Client;
+                    $url = 'https://query1.finance.yahoo.com/v8/finance/chart/' . rawurlencode($symbol) . '?interval=5m&range=5d&includePrePost=true';
+                    $response = $client->get($url, [
+                        'headers' => ['User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
+                        'timeout' => 5,
+                    ]);
+                    $result = json_decode($response->getBody()->getContents(), true)['chart']['result'][0] ?? [];
+                    $closes = $result['indicators']['quote'][0]['close'] ?? [];
+
+                    $found = 0.0;
+                    foreach ($result['timestamp'] ?? [] as $i => $t) {
+                        $value = $closes[$i] ?? null;
+                        if ($value !== null && gmdate('Y-m-d', (int) $t + $gmtOffset) === $lastSessionDate) {
+                            $found = (float) $value;  // 그날 마지막 비-null 봉 = 종가
+                        }
+                    }
+
+                    return $found;
+                } catch (\Exception $e) {
+                    // 실패도 0.0 으로 캐시한다 — Cache::remember 는 null 을 미스로 봐 매 요청 재조회한다.
+                    return 0.0;
+                }
+            }
+        );
+
+        return ($close > 0) ? (float) $close : null;
     }
 
     private function generateKOSPINightFutures($kospi, $nq)
@@ -959,6 +1053,29 @@ class StockController extends Controller
                 // chartPreviousClose 는 조회 범위 시작 직전 값이라 전일종가가 한 칸 밀린다 → 사용 안 함.
                 $prevCandle = prev($candles) ?: $latestCandle;
                 $prevClose = $prevCandle['close'];
+
+                // 당일 봉이 통째로 결손(close=null → 위 루프에서 스킵)이면 마지막 봉이 과거가 되고,
+                // 그 상태로 end/prev 를 쓰면 '지난 거래일의 등락'이 현재값처럼 나간다
+                // (^KS11 8/3·8/4 연속 close=null → 7/31 종가 6595.45 + 7/30 대비 +17.91% 실측).
+                // 그때만 meta 현재가로 대체하고 기준가를 마지막 봉(=직전 거래일 종가)으로 당긴다.
+                // '오늘' 판정은 서버 시계가 아니라 응답의 regularMarketTime+gmtoffset(거래소 현지)로 한다
+                // — 거래소 시간대를 응답이 이미 들고 있어 별도 세션 헬퍼가 필요 없다(parseYahooFinanceChart 와 동일 근거).
+                $metaPrice = (float) ($meta['regularMarketPrice'] ?? 0);
+                $today = gmdate('Y-m-d', (int) ($meta['regularMarketTime'] ?? time()) + (int) ($meta['gmtoffset'] ?? 0));
+                if ($metaPrice > 0 && (string) $latestCandle['time'] < $today) {
+                    $current = $metaPrice;
+                    $prevClose = $latestCandle['close'];
+                }
+
+                // 위 두 경로 모두 기준가가 '오늘 이전 마지막 값 있는 일봉'에서 온다.
+                // 그 사이 세션의 일봉이 결손이면 기준가가 하루 밀리므로 분봉에서 보강한다.
+                // ($candles 의 time 은 KST 표기라 여기선 쓰지 않고 거래소 현지 기준 원본 배열로 판정한다.)
+                $backfilled = $this->backfillPrevCloseFromIntraday(
+                    $timestamps, $quote['close'] ?? [], $symbol, $today, (int) ($meta['gmtoffset'] ?? 0)
+                );
+                if ($backfilled !== null) {
+                    $prevClose = $backfilled;
+                }
             } else {
                 // Yahoo meta 전일종가 사용 (KIS 전일종가 조회 제거 후 Yahoo meta로 통일)
                 $metaPrevClose = $meta['previousClose'] ?? $meta['chartPreviousClose'] ?? 0.0;

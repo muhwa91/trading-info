@@ -94,6 +94,49 @@ class IndexFutureChangePercentTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────────────
+    // 3-1. 1d 분기 — 당일 봉 결손 시 meta 현재가로 대체 (2026-08-04)
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function test_one_day_branch_falls_back_to_meta_price_when_today_candle_missing(): void
+    {
+        $src = $this->getOneDayBranch();
+
+        // (a) meta 현재가 대체가 존재한다
+        $this->assertMatchesRegularExpression(
+            "/\\\$current\s*=\s*\\\$metaPrice/",
+            $src,
+            '1d 분기에 meta regularMarketPrice 대체($current = $metaPrice)가 없음. ' .
+            '당일 봉이 close=null 로 통째 결손이면 end($candles) 가 지난 거래일이라 낡은 가격·낡은 등락률이 나간다 ' .
+            '(^KS11 8/3·8/4 연속 null → 7/31 종가 + 7/30 대비 +17.91% 실측).'
+        );
+
+        // (b) '오늘' 판정은 서버 시계가 아니라 응답의 regularMarketTime + gmtoffset(거래소 현지)로 한다
+        $this->assertMatchesRegularExpression(
+            "/gmdate\(\s*'Y-m-d'\s*,[^;]*regularMarketTime[^;]*gmtoffset/s",
+            $src,
+            "1d 분기의 '오늘' 판정이 gmdate('Y-m-d', regularMarketTime + gmtoffset) 가 아님. " .
+            '서버 시계를 쓰면 거래소 시간대(미국·KR)에 따라 당일 봉을 오판한다.'
+        );
+
+        // (c) 대체는 '마지막 봉이 오늘보다 과거일 때'만 — 정상 피드(당일 봉 생존)는 종전 동작 유지
+        $this->assertMatchesRegularExpression(
+            "/\\\$latestCandle\['time'\]\s*<\s*\\\$today/",
+            $src,
+            "meta 대체가 \$latestCandle['time'] < \$today 가드 없이 무조건 실행된다. " .
+            '정상 피드(마지막 봉 = 오늘)에서는 종전 캔들 기반 동작이 그대로여야 한다.'
+        );
+
+        // (d) 대체 시 기준가는 마지막 봉(= 직전 거래일 종가)으로 당긴다
+        $this->assertMatchesRegularExpression(
+            "/\\\$prevClose\s*=\s*\\\$latestCandle\['close'\]/",
+            $src,
+            "meta 대체 시 기준가를 \$latestCandle['close'] 로 당기지 않음. " .
+            'prev($candles) 를 그대로 두면 전전 거래일 대비가 되어 등락률이 한 칸 밀린다.'
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
     // 4. 야간선물 base — '0002' 사용 금지
     // ──────────────────────────────────────────────────────────────────────
 
@@ -168,6 +211,21 @@ class IndexFutureChangePercentTest extends TestCase
         $length = ($end !== false) ? ($end - $start) : 10000;
 
         return substr($src, $start, $length);
+    }
+
+    /**
+     * getYahooChartData() 안의 1d 등락률 분기만 추출.
+     * ($latestCandle 확정 지점 ~ 분봉 else 블록 직전. 캔들 시간 포맷용 1d 분기와 구분하기 위한 앵커)
+     */
+    private function getOneDayBranch(): string
+    {
+        $src = $this->getYahooChartSection();
+        $start = strpos($src, '$latestCandle = end($candles);');
+        $this->assertNotFalse($start, 'getYahooChartData() 에서 $latestCandle = end($candles) 앵커를 찾을 수 없음');
+
+        $end = strpos($src, '} else {', $start);
+
+        return substr($src, $start, ($end !== false) ? ($end - $start) : 3000);
     }
 
     /**
