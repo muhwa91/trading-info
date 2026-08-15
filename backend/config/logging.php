@@ -64,7 +64,8 @@ return [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
-            'days' => 14,
+            // 실측(2026-08-16): 피크 68MB/일(2026-07-16). 14일이면 최악 ~1GB라 7일로 제한.
+            'days' => 7,
         ],
 
         'slack' => [
