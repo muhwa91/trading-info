@@ -13,7 +13,15 @@ export const SESSION_BADGE_BASE =
 
 const TONE_OPEN   = 'text-ses-open bg-ses-open-weak border-ses-open-line';
 const TONE_EXT    = 'text-ses-ext bg-ses-ext-weak border-ses-ext-line';
-const TONE_CLOSED = 'text-base-content/40 bg-base-200/40 border-base-content/10';
+// 🔴 `text-base-content/40` 으로 되돌리지 말 것 — WCAG AA 미달이다 (2026-08-16 실측).
+//   투명도는 «합성 후» 실효색으로 재야 한다: 배지 배경이 `bg-base-200/40` on base-100 = #121923 이고,
+//   그 위의 base-content/40 은 실효 #676D75 라 **3.38:1**(AA 는 4.5 필요). 불투명 muted 는 6.89:1.
+//   원색만 보면 #E6EAF0 on #141B26 = 13:1 로 읽혀 문제가 안 보인다 — 이 결함이 오래 남은 이유다.
+//   ⚠️ 다른 두 배지와 비교할 땐 **각자 자기 배경 위에서** 재라 — 정규장·연장은
+//   `bg-base-200/40` 이 아니라 자기 weak 배경(alpha 0.10)을 쓴다. 그 위에서 정규장 6.75:1 ·
+//   연장 6.03:1 로 원래 통과였고, 마감 배지 하나만 미달이었다.
+//   style.css:68 이 이미 "마감/휴장은 중립 토큰(muted) 재사용"이라 적어 둔 대로 맞춘 것이다.
+const TONE_CLOSED = 'text-muted bg-base-200/40 border-base-content/10';
 
 // 연장 세션 라벨 — 백엔드 session / indexQuoteLabel 이 내는 표기를 모두 수용
 const EXT_LABELS = ['프리마켓', '애프터마켓', '주간거래', '야간거래', '거래중', '야간 거래중'];
