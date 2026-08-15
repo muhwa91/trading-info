@@ -88,7 +88,6 @@ frontend/src/                Vue SPA (그리드·차트·포트폴리오)
 ```
 
 - 포트폴리오 트래커 적응 설계: [`docs/portfolio-tracker-adaptation.md`](docs/portfolio-tracker-adaptation.md) · 원본 빌드 스펙: [`docs/portfolio-tracker-buildspec.html`](docs/portfolio-tracker-buildspec.html)
-- 진행 로그: [`docs/progress.html`](docs/progress.html)
 
 ## 개발 방식
 
