@@ -1,6 +1,6 @@
 ﻿# trading-info 세팅 스크립트 (Laravel 13 + Vue 3 + TiDB Cloud Serverless)
 # ─────────────────────────────────────────────────────────────
-# 사용: chiikawa_dev 클론 후 이 폴더에서 PowerShell 로 실행.
+# 사용: workspace 레포 클론 후 이 폴더에서 PowerShell 로 실행.
 #   powershell -ExecutionPolicy Bypass -File .\setup_trading-info.ps1
 #
 # 사전 준비(SETUP.md 참조 — 런타임은 이 스크립트가 설치하지 않음):
