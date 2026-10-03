@@ -29,6 +29,19 @@ use Illuminate\Support\Facades\Log;
  *   토큰·시크릿은 로그에 평문 출력하지 않는다 (마스킹 처리).
  *   비밀값은 .env / config 에서만 읽는다.
  *
+ * 토큰 공유 (2026-10-04, 관리자 결정 — 같은 PC 의 다른 로컬 앱과 같은 규약):
+ *   토스는 계정당 키 1개·활성 토큰 1개라, 한쪽이 새로 발급하면 다른 쪽 토큰이 401 이 된다.
+ *   Windows 로컬(%LOCALAPPDATA% 있음)에서는 `%LOCALAPPDATA%\chiikawa\toss_token.json` 을 정본으로 쓴다.
+ *     ① 파일 토큰이 만료 5분 전보다 이르면 그대로 쓴다.
+ *     ② 아니면 `toss_token.lock` 배타 생성(fopen 'x', 60초 넘은 잠금은 낡은 것으로 지움, 최대 10초 대기)
+ *        → 다시 읽기 → 그래도 없으면 발급·원자 저장(임시파일 + rename) → 잠금 해제.
+ *        잠금 해제는 «내가 쓴 내용일 때만» 지운다 — 내 잠금이 이미 낡음으로 회수됐다면 그 파일은 남의 것이다.
+ *     ③ 401: 파일에 «내가 쓴 것과 다른» 토큰이 있으면 그걸로 1회 재시도(발급 안 함), 같으면 ②.
+ *     ④ 재발급 상한 5분 1회 — `toss_issue.json` 에 시도 시각을 남긴다(실패한 발급도 센다).
+ *        403(IP 미등록)·키 오류일 때 요청마다 잠금을 잡고 발급을 때려 다른 로컬 앱를 굶기는 것을 막는다.
+ *        companion-app 는 같은 이름·같은 스키마(`issued_at`·`error`)를 자기 `data/` 에 둔다(앱별 카운터).
+ *   %LOCALAPPDATA% 가 없는 곳(배포 서버 등)과 테스트(runningUnitTests)는 종전 Laravel Cache 그대로.
+ *
  * rate-limit 기준 (토스 Open API 공식):
  *   MARKET_DATA       : 10 TPS
  *   MARKET_DATA_CHART : 5 TPS
@@ -78,13 +91,57 @@ class TossApiClient
 
     private Client $httpClient;
 
-    public function __construct()
+    /** 공유 토큰 파일 이름·잠금 이름 (companion-app 와 같은 이름) */
+    private const SHARED_TOKEN_FILE = 'toss_token.json';
+
+    private const SHARED_LOCK_FILE = 'toss_token.lock';
+
+    /** 재발급 상한 기록 — companion-app `core/toss.py` 와 같은 이름·스키마 */
+    private const SHARED_ISSUE_FILE = 'toss_issue.json';
+
+    /** 만료 이만큼(초) 전부터는 쓰지 않고 새로 받는다 */
+    private const SHARED_EXPIRY_MARGIN = 300;
+
+    /** 재발급 상한 — 이 시간(초) 안에 이미 발급을 시도했으면 다시 하지 않는다 (companion-app REISSUE_MIN_S) */
+    private const SHARED_REISSUE_MIN = 300;
+
+    /**
+     * 이보다 오래된(초) 잠금은 죽은 프로세스가 남긴 것으로 본다.
+     *
+     * 🔴 값은 companion-app 와 합의된 공유 규약이라 바꾸지 않는다 — 테스트가 덮어쓸 수 있게 protected 일 뿐이다.
+     */
+    protected const SHARED_LOCK_STALE = 60;
+
+    /** 잠금을 기다리는 최대 시간(초) — 값은 공유 규약(위와 같다) */
+    protected const SHARED_LOCK_WAIT = 10;
+
+    /** 공유 파일 폴더 — null 이면 종전 Laravel Cache 동작 */
+    private ?string $sharedDir;
+
+    /**
+     * @param  string|null  $sharedTokenDir  공유 토큰 폴더(테스트가 임시 폴더를 주입). null 이면
+     *                                       %LOCALAPPDATA%\chiikawa — 단 테스트 실행 중이거나 LOCALAPPDATA 가
+     *                                       없으면(배포 서버) 공유하지 않는다.
+     */
+    public function __construct(?string $sharedTokenDir = null)
     {
         $this->httpClient = new Client([
             'base_uri' => rtrim((string) config('services.toss.api_url'), '/'),
             'timeout' => 10,
             'headers' => ['Accept' => 'application/json'],
         ]);
+        $this->sharedDir = $sharedTokenDir ?? self::defaultSharedDir();
+    }
+
+    private static function defaultSharedDir(): ?string
+    {
+        // 테스트는 실제 공유 파일(=실제 토큰)을 절대 건드리지 않는다 — 필요한 테스트는 폴더를 주입한다
+        if (app()->runningUnitTests()) {
+            return null;
+        }
+        $base = getenv('LOCALAPPDATA');
+
+        return is_string($base) && $base !== '' ? $base . DIRECTORY_SEPARATOR . 'chiikawa' : null;
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -104,6 +161,14 @@ class TossApiClient
      */
     public function get(string $path, array $query = [], bool $isRetry = false): array
     {
+        // 🔴 Bearer 토큰이 base_uri 밖으로 나가는 것을 막는다 — Guzzle 은 절대 URL·'//host/x' 를 주면
+        //    base_uri 를 무시하고 그 호스트로 보낸다. 토스 경로만 허용한다.
+        if (! str_starts_with($path, '/') || str_starts_with($path, '//')) {
+            Log::error('[TossApiClient] 토스 경로가 아니다 — 요청 거부', ['path' => $path]);
+
+            return [];
+        }
+
         $token = $this->getAccessToken();
         if ($token === null) {
             Log::warning('[TossApiClient] 토큰 없음 — 요청 건너뜀', ['path' => $path]);
@@ -135,8 +200,12 @@ class TossApiClient
                 Log::warning('[TossApiClient] 401 invalid-token — 토큰 재발급 후 1회 재시도', [
                     'path' => $path,
                 ]);
-                Cache::forget(self::TOKEN_CACHE_KEY);
-                $this->getAccessToken(true);
+                if ($this->sharedDir === null) {
+                    Cache::forget(self::TOKEN_CACHE_KEY);
+                    $this->getAccessToken(true);
+                } else {
+                    $this->refreshSharedAfter401($token);
+                }
 
                 return $this->get($path, $query, true);
             }
@@ -180,6 +249,12 @@ class TossApiClient
      */
     public function getAccessToken(bool $forceRefresh = false): ?string
     {
+        if ($this->sharedDir !== null) {
+            $shared = $forceRefresh ? null : $this->readSharedToken();
+
+            return $shared ?? $this->issueShared($this->readSharedToken());
+        }
+
         if ($forceRefresh) {
             Cache::forget(self::TOKEN_CACHE_KEY);
         }
@@ -226,6 +301,8 @@ class TossApiClient
      *   Content-Type: application/x-www-form-urlencoded
      *   body: grant_type=client_credentials&client_id=...&client_secret=...
      *   응답: { access_token, token_type: "Bearer", expires_in: 86399 }
+     *
+     * 공유 모드에서는 «5분에 1회» 상한을 지킨다(실패한 발급도 센다) — companion-app 와 같은 규약.
      */
     private function issueToken(): ?string
     {
@@ -237,6 +314,13 @@ class TossApiClient
 
             return null;
         }
+
+        if ($this->reissueTooSoon()) {
+            return null;
+        }
+
+        // 시도 자체를 기록한다 — 실패한 발급도 상한에 넣어야 403·키오류 때 폭주하지 않는다
+        $attempt = microtime(true);
 
         try {
             $response = $this->httpClient->post('/oauth2/token', [
@@ -255,12 +339,18 @@ class TossApiClient
                 Log::error('[TossApiClient] 토큰 발급 실패 — access_token 없음', [
                     'error' => $data['error'] ?? 'unknown',
                 ]);
+                $this->writeIssueRecord($attempt, 'toss_auth_failed');
 
                 return null;
             }
 
             $token = $data['access_token'];
-            Cache::put(self::TOKEN_CACHE_KEY, $token, self::TOKEN_TTL_SECONDS);
+            if ($this->sharedDir !== null) {
+                $this->writeSharedToken($token, $this->tokenLifetime($data));
+                $this->writeIssueRecord($attempt, null);
+            } else {
+                Cache::put(self::TOKEN_CACHE_KEY, $token, self::TOKEN_TTL_SECONDS);
+            }
 
             // 발급 성공 — 값 자체는 출력하지 않고 만료 시간만 로그
             Log::info('[TossApiClient] 토큰 발급 OK', [
@@ -273,8 +363,211 @@ class TossApiClient
         } catch (\Throwable $e) {
             // 예외 메시지에도 시크릿이 섞이지 않도록 단순 메시지만
             Log::error('[TossApiClient] 토큰 발급 예외: ' . $e->getMessage());
+            $status = $e instanceof \GuzzleHttp\Exception\RequestException && $e->getResponse() !== null
+                ? $e->getResponse()->getStatusCode()
+                : null;
+            // 코드 어휘는 companion-app 와 같다 (toss_ip_denied = 403 IP 미등록)
+            $this->writeIssueRecord($attempt, $status === 403 ? 'toss_ip_denied' : 'toss_auth_failed');
 
             return null;
+        }
+    }
+
+    /**
+     * 만료까지 남은 초 — 토스가 0·음수·숫자 아닌 값을 주면 하한 300초로 본다.
+     *
+     * 하한이 없으면 `expires_at = now` 가 되어 요청마다 재발급 → 같은 키를 쓰는 다른 로컬 앱 토큰이 끊긴다.
+     * (발급 폭주 자체는 위 재발급 상한이 막는다. 여기서는 과거 시각이 파일에 적히는 것만 막는다.)
+     *
+     * @param  array<mixed>  $data  토큰 응답 본문
+     */
+    private function tokenLifetime(array $data): int
+    {
+        $raw = $data['expires_in'] ?? null;
+
+        return max(300, is_numeric($raw) ? (int) $raw : 3600);
+    }
+
+    /**
+     * 공유 모드에서 «5분 안에 이미 발급을 시도했나». 공유하지 않으면 항상 false.
+     */
+    private function reissueTooSoon(): bool
+    {
+        if ($this->sharedDir === null) {
+            return false;
+        }
+        $raw = @file_get_contents($this->sharedPath(self::SHARED_ISSUE_FILE));
+        $data = $raw === false ? null : json_decode($raw, true);
+        $issuedAt = is_array($data) ? ($data['issued_at'] ?? null) : null;
+        if (! is_numeric($issuedAt) || microtime(true) - (float) $issuedAt >= self::SHARED_REISSUE_MIN) {
+            return false;
+        }
+        Log::warning('[TossApiClient] 토큰 재발급 상한(5분 1회)에 걸림 — 이번 회차는 토큰 없음', [
+            'last_error' => is_array($data) ? ($data['error'] ?? null) : null,
+        ]);
+
+        return true;
+    }
+
+    /** 발급 시도 기록 — 실패면 코드까지(companion-app `toss_issue.json` 과 같은 스키마). */
+    private function writeIssueRecord(float $attempt, ?string $error): void
+    {
+        if ($this->sharedDir === null) {
+            return;
+        }
+        $this->ensureSharedDir();
+        $record = ['issued_at' => $attempt];
+        if ($error !== null) {
+            $record['error'] = $error;
+        }
+        if (@file_put_contents($this->sharedPath(self::SHARED_ISSUE_FILE), (string) json_encode($record)) === false) {
+            Log::warning('[TossApiClient] 발급 기록 저장 실패 — 재발급 상한이 느슨해진다');
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────
+    // 공유 토큰 파일 (companion-app 와 같은 규약 — 클래스 주석 참고)
+    // ──────────────────────────────────────────────────────────────────
+
+    /**
+     * 401 뒤: 파일에 내가 쓴 것과 다른 토큰이 있으면 아무것도 안 한다(그걸로 재시도),
+     * 같으면 잠금 안에서 새로 받는다.
+     */
+    private function refreshSharedAfter401(string $staleToken): void
+    {
+        $current = $this->readSharedToken();
+        if ($current !== null && $current !== $staleToken) {
+            Log::info('[TossApiClient] 공유 파일에 다른 앱이 받은 새 토큰 — 발급 없이 재시도');
+
+            return;
+        }
+        $this->issueShared($staleToken);
+    }
+
+    /**
+     * 잠금 → 다시 읽기(그사이 다른 쪽이 받았을 수 있다) → 그래도 없거나 $staleToken 이면 발급·저장.
+     */
+    private function issueShared(?string $staleToken): ?string
+    {
+        if (! $this->acquireSharedLock()) {
+            Log::warning('[TossApiClient] 공유 토큰 잠금 대기 초과 — 이번 요청은 토큰 없음');
+
+            return null;
+        }
+        try {
+            $current = $this->readSharedToken();
+            if ($current !== null && $current !== $staleToken) {
+                return $current;
+            }
+
+            return $this->issueToken();
+        } finally {
+            $this->releaseSharedLock();
+        }
+    }
+
+    /**
+     * 🔴 내가 쓴 내용일 때만 지운다 — 내 잠금이 이미 «낡음»(30초)으로 companion-app 에 회수됐다면
+     *    그 파일은 상대의 것이다. 남의 잠금을 끊으면 양쪽이 서로의 토큰을 끊는다(2026-10-04 06:12 사고).
+     *    읽기 실패·불일치면 조용히 넘긴다(해제에서 예외를 밖으로 내지 않는다).
+     */
+    private function releaseSharedLock(): void
+    {
+        $lock = $this->sharedPath(self::SHARED_LOCK_FILE);
+        $owner = @file_get_contents($lock);
+        if ($owner === $this->lockOwnerTag()) {
+            @unlink($lock);
+        }
+    }
+
+    /** 잠금 파일에 쓰는 소유자 표시 — companion-app 의 `f"{ISSUER} {os.getpid()}"` 와 같은 형식. */
+    private function lockOwnerTag(): string
+    {
+        return 'trading-info ' . getmypid();
+    }
+
+    private function sharedPath(string $name): string
+    {
+        return $this->sharedDir . DIRECTORY_SEPARATOR . $name;
+    }
+
+    /** 공유 폴더 보장 — 토큰이 들어가므로 소유자만(0700). POSIX 호스트에서 world-writable 금지. */
+    private function ensureSharedDir(): void
+    {
+        if (! is_dir($this->sharedDir)) {
+            @mkdir($this->sharedDir, 0700, true);
+        }
+    }
+
+    /** 공유 파일의 쓸 수 있는 토큰(만료 5분 전까지). 없거나 깨졌으면 null. */
+    private function readSharedToken(): ?string
+    {
+        $raw = @file_get_contents($this->sharedPath(self::SHARED_TOKEN_FILE));
+        if ($raw === false) {
+            return null;
+        }
+        $data = json_decode($raw, true);
+        $token = is_array($data) ? ($data['access_token'] ?? null) : null;
+        $expiresAt = is_array($data) ? ($data['expires_at'] ?? null) : null;
+        if (! is_string($token) || $token === '' || ! is_numeric($expiresAt)) {
+            return null;
+        }
+
+        return (float) $expiresAt - self::SHARED_EXPIRY_MARGIN > microtime(true) ? $token : null;
+    }
+
+    /** 임시파일에 쓰고 rename 으로 원자 교체 — 읽는 쪽이 반쯤 쓴 파일을 보지 않게. */
+    private function writeSharedToken(string $token, int $expiresIn): void
+    {
+        $this->ensureSharedDir();
+        $now = time();
+        $json = json_encode([
+            'access_token' => $token,
+            'expires_at' => $now + $expiresIn,
+            'issued_at' => $now,
+            'issuer' => 'trading-info',
+        ]);
+        $tmp = $this->sharedPath('.toss_token.' . bin2hex(random_bytes(6)) . '.tmp');
+        // 🔴 rename 전에 0600 — POSIX 기본 umask 면 토큰 파일이 world-readable(0644) 로 남는다.
+        //    chmod 실패(윈도우 등)는 저장 자체를 막지 않는다 — 토큰을 잃는 쪽이 더 나쁘다.
+        $written = $json !== false && @file_put_contents($tmp, $json) !== false;
+        if ($written) {
+            @chmod($tmp, 0600);
+        }
+        if (! $written || ! @rename($tmp, $this->sharedPath(self::SHARED_TOKEN_FILE))) {
+            @unlink($tmp);
+            Log::warning('[TossApiClient] 공유 토큰 파일 저장 실패');  // 값은 남기지 않는다
+        }
+    }
+
+    /** `toss_token.lock` 배타 생성. 60초 넘은 잠금은 지우고 다시, 최대 10초 기다린다. */
+    private function acquireSharedLock(): bool
+    {
+        $this->ensureSharedDir();
+        $lock = $this->sharedPath(self::SHARED_LOCK_FILE);
+        $deadline = microtime(true) + static::SHARED_LOCK_WAIT;
+        while (true) {
+            $handle = @fopen($lock, 'x');
+            if ($handle !== false) {
+                fwrite($handle, $this->lockOwnerTag());
+                fclose($handle);
+
+                return true;
+            }
+            clearstatcache(true, $lock);
+            $mtime = @filemtime($lock);
+            if ($mtime !== false && time() - $mtime > static::SHARED_LOCK_STALE) {
+                Log::warning('[TossApiClient] 낡은 공유 토큰 잠금 제거(30초 초과)');
+                if (@unlink($lock)) {
+                    continue;  // 지웠다 — 바로 다시 잡아 본다
+                }
+                // 못 지웠다(윈도우 점유·권한·남이 먼저 지움) → 아래 deadline·usleep 을 반드시 지난다.
+                // 🔴 여기서 continue 하면 지울 수 없는 잠금에 무한 회전한다(companion-app 쪽과 같은 규약).
+            }
+            if (microtime(true) >= $deadline) {
+                return false;
+            }
+            usleep(200_000);
         }
     }
 
