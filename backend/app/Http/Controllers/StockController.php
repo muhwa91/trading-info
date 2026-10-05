@@ -909,6 +909,15 @@ class StockController extends Controller
         ]);
     }
 
+    /**
+     * getYahooChartData 의 HTTP 클라이언트 — 테스트가 응답을 바꿔 끼우는 자리(IndexPrevCloseParityTest).
+     * ponytail: 이 경로 하나만 뺐다. 나머지 `new Client` 는 값으로 검증할 테스트가 생길 때 같은 식으로.
+     */
+    protected function yahooChartClient(): Client
+    {
+        return new Client;
+    }
+
     public function getYahooChartData($ticker, $timeframe, $raw = false)
     {
         $symbol = $ticker;
@@ -961,7 +970,7 @@ class StockController extends Controller
         }
 
         try {
-            $client = new Client;
+            $client = $this->yahooChartClient();
             $url = "https://query1.finance.yahoo.com/v8/finance/chart/{$symbol}?interval={$interval}&range={$range}&includePrePost=true";
             $response = $client->get($url, [
                 'headers' => [
