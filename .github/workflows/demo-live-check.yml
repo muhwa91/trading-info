@@ -1,0 +1,42 @@
+name: Demo live check
+
+# After Vercel finishes a Production deployment of the demo, confirm the live bundle
+# was built in demo mode (VITE_DEMO=1): it must reference the mock chunk and contain
+# no hard-coded localhost:port. Without the env var the demo becomes a blank page.
+#
+# Runs triggered by deployment_status are attributed to vercel[bot], so a red run
+# notifies nobody — a failure therefore opens an issue (the owner gets notified).
+on:
+  deployment_status:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  live-check:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment.environment == 'Production')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # --live only fetches the public demo URL; no install needed.
+      - name: Check live demo bundle
+        run: node frontend/scripts/check-demo-bundle.mjs --live
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Demo live check failed (${SHA:0:7})" \
+            --body "The live demo bundle failed the demo-mode check after deployment. Check that VITE_DEMO=1 is set on Vercel. Run: $RUN_URL"
