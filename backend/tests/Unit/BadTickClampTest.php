@@ -40,10 +40,10 @@ class BadTickClampTest extends TestCase
     {
         parent::setUp();
         // StockController 생성자: MarketSessionService + TossPriceFetcher + TossCandleProvider + TossStockMaster (Phase 7 추가)
-        $sessionService = $this->createMock(\App\Services\MarketSessionService::class);
-        $tossPriceFetcher = $this->createMock(\App\Services\Toss\TossPriceFetcher::class);
-        $tossCandleProvider = $this->createMock(\App\Services\Toss\TossCandleProvider::class);
-        $stockMaster = $this->createMock(\App\Services\Toss\TossStockMaster::class);
+        $sessionService = $this->createStub(\App\Services\MarketSessionService::class);
+        $tossPriceFetcher = $this->createStub(\App\Services\Toss\TossPriceFetcher::class);
+        $tossCandleProvider = $this->createStub(\App\Services\Toss\TossCandleProvider::class);
+        $stockMaster = $this->createStub(\App\Services\Toss\TossStockMaster::class);
         $this->controller = new StockController($sessionService, $tossPriceFetcher, $tossCandleProvider, $stockMaster);
     }
 

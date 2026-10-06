@@ -10,6 +10,7 @@ use App\Services\Toss\TossChangeCalculator;
 use App\Services\Toss\TossPriceFetcher;
 use App\Services\Toss\TossSymbolMapper;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -23,6 +24,8 @@ use Tests\TestCase;
  *   - KR 종목: 기존 경로 유지 (회귀 없음)
  *   - 지수: null 반환
  */
+// 공용 priceFetcherMock 을 일부 테스트만 expects 로 검증 — setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossQuoteProviderUsTest extends TestCase
 {
     private $priceFetcherMock;
@@ -36,7 +39,7 @@ class TossQuoteProviderUsTest extends TestCase
         parent::setUp();
 
         $this->priceFetcherMock = $this->createMock(TossPriceFetcher::class);
-        $calculatorMock = $this->createMock(TossChangeCalculator::class);
+        $calculatorMock = $this->createStub(TossChangeCalculator::class);
         $this->mapper = new TossSymbolMapper;
 
         $this->provider = new TossQuoteProvider(

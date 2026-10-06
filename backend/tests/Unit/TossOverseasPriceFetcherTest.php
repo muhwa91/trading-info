@@ -9,6 +9,7 @@ use App\Services\Toss\TossChangeCalculator;
 use App\Services\Toss\TossPriceFetcher;
 use App\Services\Toss\TossSymbolMapper;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -22,6 +23,8 @@ use Tests\TestCase;
  *   - fetchOverseasSingle: 토스 실패 → 24h 폴백 반환
  *   - fetchSingle: US 종목은 fetchOverseasSingle 위임
  */
+// 공용 clientMock 을 일부 테스트만 expects 로 검증 — setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossOverseasPriceFetcherTest extends TestCase
 {
     private $clientMock;
@@ -37,7 +40,7 @@ class TossOverseasPriceFetcherTest extends TestCase
         parent::setUp();
 
         $this->clientMock = $this->createMock(TossApiClient::class);
-        $this->calculatorMock = $this->createMock(TossChangeCalculator::class);
+        $this->calculatorMock = $this->createStub(TossChangeCalculator::class);
         $this->mapper = new TossSymbolMapper;
 
         $this->fetcher = new TossPriceFetcher(

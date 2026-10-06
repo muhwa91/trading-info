@@ -66,7 +66,7 @@ class KrStockResolverDbTest extends TestCase
         parent::setUp();
 
         // HTTP 대역 클라이언트 → 실 토스 호출 구조적으로 불가.
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturnCallback(function (string $path, array $query = []): array {
             return ['result' => $this->fixtureFor($query['symbols'] ?? '')];
         });

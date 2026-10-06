@@ -94,7 +94,7 @@ class FxServicePrevCloseTest extends TestCase
         Cache::put(self::PREV_CLOSE_KEY, 1505.91, 60);
 
         // DB 값 없음 → 토스 취득 경로
-        $fxProvider = $this->createMock(TossFxProvider::class);
+        $fxProvider = $this->createStub(TossFxProvider::class);
         $fxProvider->method('fetchUsdKrw')->willReturn([
             'rate' => 1496.3,
             'recorded_at' => Carbon::now()->toDateTimeString(),
@@ -122,7 +122,7 @@ class FxServicePrevCloseTest extends TestCase
             'recorded_at' => Carbon::now(),
         ]);
 
-        $service = new FxService($this->createMock(TossFxProvider::class));
+        $service = new FxService($this->createStub(TossFxProvider::class));
         $result = $service->getUsdKrw();
 
         $this->assertNotNull($result);
@@ -187,11 +187,11 @@ class FxServicePrevCloseTest extends TestCase
     /**
      * 결정론 캘린더 대역 — 주말 + KR_HOLIDAYS 리터럴만 휴장. 토스 캘린더 API 를 타지 않는다.
      *
-     * @return MarketSessionService&\PHPUnit\Framework\MockObject\MockObject
+     * @return MarketSessionService&\PHPUnit\Framework\MockObject\Stub
      */
     private function fxSession()
     {
-        $session = $this->createMock(MarketSessionService::class);
+        $session = $this->createStub(MarketSessionService::class);
         $session->method('isKrTradingDay')->willReturnCallback(function (int $ts): bool {
             $day = Carbon::createFromTimestamp($ts, 'Asia/Seoul');
 
@@ -208,7 +208,7 @@ class FxServicePrevCloseTest extends TestCase
      */
     private function makeService(array $barsByKstTime): FxService
     {
-        $fxProvider = $this->createMock(TossFxProvider::class);
+        $fxProvider = $this->createStub(TossFxProvider::class);
         $fxProvider->method('fetchUsdKrw')->willReturn([
             'rate' => 1484.1,
             'recorded_at' => '2026-07-17 09:00:00',

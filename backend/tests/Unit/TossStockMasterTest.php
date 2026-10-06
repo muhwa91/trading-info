@@ -8,6 +8,7 @@ use App\Services\Toss\TossApiClient;
 use App\Services\Toss\TossStockMaster;
 use App\Services\Toss\TossSymbolMapper;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
@@ -25,6 +26,8 @@ use Tests\TestCase;
  *   - securityType 매핑(STOCK→stock, ETF→etf, FUTURES→stock)
  *   - 국내 종목 심볼(.KS 접미사 포함) 처리
  */
+// 공용 clientMock 을 일부 테스트만 expects 로 검증 — setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossStockMasterTest extends TestCase
 {
     private $clientMock;

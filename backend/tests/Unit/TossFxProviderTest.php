@@ -40,7 +40,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_valid_response_returns_float(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => [
                 'baseCurrency' => 'USD',
@@ -65,7 +65,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_rate_with_many_decimals_rounded_to4(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['rate' => '1548.12345678'],
         ]);
@@ -80,7 +80,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_integer_rate_string_parsed_correctly(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['rate' => '1500'],
         ]);
@@ -99,7 +99,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_empty_response_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([]);
 
         $provider = new TossFxProvider($client);
@@ -109,7 +109,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_missing_result_key_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn(['error' => 'some_error']);
 
         $provider = new TossFxProvider($client);
@@ -119,7 +119,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_missing_rate_field_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['baseCurrency' => 'USD', 'quoteCurrency' => 'KRW'],
         ]);
@@ -131,7 +131,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_rate_zero_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['rate' => '0'],
         ]);
@@ -143,7 +143,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_negative_rate_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['rate' => '-100.0'],
         ]);
@@ -155,7 +155,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_empty_rate_string_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn([
             'result' => ['rate' => '   '],
         ]);
@@ -167,7 +167,7 @@ class TossFxProviderTest extends TestCase
     #[Test]
     public function test_fetch_usd_krw_client_throws_exception_returns_null(): void
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willThrowException(new \RuntimeException('network error'));
 
         $provider = new TossFxProvider($client);

@@ -14,6 +14,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use Tests\TestCase;
 
 /**
@@ -26,6 +27,8 @@ use Tests\TestCase;
  *   - 캐시 히트 시 API 호출 없음
  *   - fetchSingle 국내/미국 분기
  */
+// 공용 clientMock 을 일부 테스트만 expects 로 검증 — setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossPriceFetcherTest extends TestCase
 {
     private $clientMock;
@@ -41,7 +44,7 @@ class TossPriceFetcherTest extends TestCase
         parent::setUp();
 
         $this->clientMock = $this->createMock(TossApiClient::class);
-        $this->calculatorMock = $this->createMock(TossChangeCalculator::class);
+        $this->calculatorMock = $this->createStub(TossChangeCalculator::class);
         $this->mapper = new TossSymbolMapper;
 
         $this->fetcher = new TossPriceFetcher(

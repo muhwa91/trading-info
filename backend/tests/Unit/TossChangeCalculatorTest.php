@@ -13,6 +13,7 @@ use GuzzleHttp\Promise\FulfilledPromise;
 use GuzzleHttp\Psr7\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use Tests\TestCase;
 
 /**
@@ -26,6 +27,8 @@ use Tests\TestCase;
  *   - 빈 응답 graceful → change=0
  *   - 봉 정렬 (시간 역순 응답도 정상 처리)
  */
+// 공용 clientMock 을 일부 테스트만 expects 로 검증 — setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossChangeCalculatorTest extends TestCase
 {
     private $clientMock;
@@ -39,7 +42,7 @@ class TossChangeCalculatorTest extends TestCase
         parent::setUp();
 
         $this->clientMock = $this->createMock(TossApiClient::class);
-        $this->sessionMock = $this->createMock(MarketSessionService::class);
+        $this->sessionMock = $this->createStub(MarketSessionService::class);
         $this->calculator = new TossChangeCalculator($this->clientMock, new TossSymbolMapper, $this->sessionMock);
 
         Cache::flush();
@@ -1611,7 +1614,7 @@ class TossChangeCalculatorTest extends TestCase
      */
     private function useRealUsSession(): void
     {
-        $calendarClient = $this->createMock(TossApiClient::class);
+        $calendarClient = $this->createStub(TossApiClient::class);
         $calendarClient->method('get')->willReturn([]);   // 캘린더 미가용 → 프로덕션 하드코딩 폴백
 
         $this->calculator = new TossChangeCalculator(

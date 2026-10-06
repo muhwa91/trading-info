@@ -53,7 +53,7 @@ class MarketSessionServiceTest extends TestCase
      */
     private function sessionService(array $nodes): MarketSessionService
     {
-        $client = $this->createMock(TossApiClient::class);
+        $client = $this->createStub(TossApiClient::class);
         $client->method('get')->willReturn(
             $nodes === []
                 ? []

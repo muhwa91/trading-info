@@ -9,12 +9,15 @@ use App\Services\Toss\TossCandleProvider;
 use App\Services\Toss\TossChangeCalculator;
 use App\Services\Toss\TossSymbolMapper;
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\AllowMockObjectsWithoutExpectations;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
  * TossCandleProvider 단위 테스트.
  */
+// 공용 clientMock/mapperMock 을 일부 테스트만 expects 로 검증 — 나머지는 stub 로 충분하나 setUp 공용 대역이라 클래스 단위로 허용
+#[AllowMockObjectsWithoutExpectations]
 class TossCandleProviderTest extends TestCase
 {
     private $clientMock;
@@ -31,7 +34,7 @@ class TossCandleProviderTest extends TestCase
 
         $this->clientMock = $this->createMock(TossApiClient::class);
         $this->mapperMock = $this->createMock(TossSymbolMapper::class);
-        $this->changeMock = $this->createMock(TossChangeCalculator::class);
+        $this->changeMock = $this->createStub(TossChangeCalculator::class);
 
         $this->provider = new TossCandleProvider(
             $this->clientMock,
