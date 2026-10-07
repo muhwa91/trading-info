@@ -1,6 +1,8 @@
 <template>
+  <!-- isolate: 카드가 자기 쌓임 맥락을 갖게 한다 — 리드아웃 태그(z-30)가 같은 z-30 인 상단 고정
+       패널(App.vue «보유 상세» sticky)과 맞붙어, 스크롤로 카드가 패널 밑에 숨어도 태그만 위로 비쳤다(2026-10-07). -->
   <div
-    class="chart-card-container relative bg-base-100 border border-hairline rounded-md pt-3 pb-3 pl-3 pr-0 h-full flex flex-col justify-between overflow-hidden"
+    class="chart-card-container isolate relative bg-base-100 border border-hairline rounded-md pt-3 pb-3 pl-3 pr-0 h-full flex flex-col justify-between overflow-hidden"
     :class="{ 'has-badges': hasHeaderBadges }"
   >
 
